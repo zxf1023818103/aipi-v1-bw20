@@ -75,22 +75,6 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
     return UTIL_SUCCESS;
 }
 
-static uint8_t *read_response(struct httpc_conn *conn, uint8_t *response_body)
-{
-    size_t read_len = 0;
-    while (read_len < conn->response.content_len) {
-        int ret = httpc_response_read_data(conn, response_body + read_len, conn->response.content_len - read_len);
-        if (ret > 0) {
-            read_len += ret;
-        } else {
-            RTK_LOGE(TAG, "Failed to read HTTP response body\n");
-            return NULL;
-        }
-    }
-    response_body[conn->response.content_len] = '\0';
-    return response_body;
-}
-
 static uint8_t* mmi_http_request(char *host, char *method, char *resource, char *content_type, uint8_t *content, size_t content_len)
 {
     uint8_t *response = NULL;
@@ -105,24 +89,42 @@ static uint8_t* mmi_http_request(char *host, char *method, char *resource, char 
                 if (httpc_response_read_header(conn) == 0) {
                     httpc_conn_dump_header(conn);
                     if (httpc_response_is_status(conn, (char *)"200 OK")) {
-                        if (conn->response.content_len > 0) {
-                            uint8_t *response_body = (uint8_t *)util_malloc(conn->response.content_len + 1);
-                            if (response_body) {
-                                if (read_response(conn, response_body)) {
-                                    RTK_LOGI(TAG, "HTTP response body: %s\n", response_body);
-                                    response = response_body;
-                                } else {
-                                    util_free(response_body);
+                        size_t max_response_len = 1024;
+                        response = util_malloc(max_response_len);
+                        if (response) {
+                            int total_size = 0;
+                            memset(response, 0, max_response_len);
+                            while (1) {
+                                int read_size = httpc_response_read_data(conn, response + total_size, max_response_len - total_size - 1);
+                                if (read_size > 0) {
+                                    total_size += read_size;
                                 }
-                            } else {
-                                RTK_LOGE(TAG, "Failed to allocate memory for HTTP response body\n");
+                                else {
+                                    break;
+                                }
+
+                                char chunk[] = "chunked";
+                                /* chunked read */
+                                if (conn->response.trans_enc && memcmp(conn->response.trans_enc, chunk, strlen(chunk)) == 0) {
+                                    if (conn->response.trans_chunk_len == 0) {
+                                        break;
+                                    }
+                                }
+                                else {
+                                    if (conn->response.content_len && (size_t)total_size >= conn->response.content_len) {
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (total_size == 0) {
+                                RTK_LOGE(TAG, "HTTP response is empty\n");
+                                util_free(response);
+                                response = NULL;
                             }
                         }
-                        else {
-                            RTK_LOGI(TAG, "HTTP response has no body\n");
-                        }
                     } else {
-                        RTK_LOGE(TAG, "HTTP request failed with status other than 200");
+                        RTK_LOGE(TAG, "HTTP request failed with status other than 200\n");
                     }
                 }
                 else {
@@ -132,6 +134,7 @@ static uint8_t* mmi_http_request(char *host, char *method, char *resource, char 
             else {
                 RTK_LOGE(TAG, "Failed to send HTTP request body, ret = %d\n", ret);
             }
+            httpc_conn_close(conn);
         } else {
             RTK_LOGE(TAG, "Failed to connect to server");
         }
@@ -149,10 +152,24 @@ static uint8_t* mmi_http_request(char *host, char *method, char *resource, char 
 int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *device_name, char *api_key)
 {
     if (c_mmi_sdk_init() == UTIL_SUCCESS) {
-        RTK_LOGI(TAG, "c_mmi_sdk_init success\n");
-        c_mmi_storage_set_api_key(api_key);
+        mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
+        // 必须要配置evt_cb，否则会导致sdk运行异常
+        mmi_config.evt_cb = mmi_event_callback;  // 注册事件回调函数，详细说明见下文
+        // 配置工作模式
+        mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
+        mmi_config.text_mode = C_MMI_TEXT_MODE_BOTH;
+        // 配置上下行音频数据格式
+        mmi_config.upstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
+        mmi_config.downstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
+        // 配置缓冲区大小
+        mmi_config.recorder_rb_size = 8 * 1024;
+        mmi_config.player_rb_size = 8 * 1024;
+
+        c_mmi_config(&mmi_config);
+        // 设置音色，需要在 c_mmi_config 后调用
+        c_mmi_set_voice_id("longxiaochun_v2");
+        
         if (c_license_device_is_registered() == 0) {
-            RTK_LOGI(TAG, "Device is not registered, proceeding with registration\n");
             c_mmi_storage_reset();
             c_mmi_storage_set_ws_id(ws_id);
             c_mmi_storage_set_app_id_str(app_id);
@@ -162,31 +179,14 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
             char time_ms_str[14];
             snprintf(time_ms_str, sizeof(time_ms_str), "%" PRId64, util_get_timestamp());
             // 根据时间戳timestamp，生成注册信息字串req
-            char request[384];
+            char request[512];
             if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
-                uint8_t *response = mmi_http_request("bailian.multimodalagent.aliyuncs.com", "POST", "/api/v1/device/register", "application/json", (uint8_t*)request, strlen(request));
+                uint8_t *response = mmi_http_request("bailian.multimodalagent.aliyuncs.com", "POST", "/api/device/v1/register", "application/json", (uint8_t*)request, strlen(request));
                 if (response) {
                     int32_t err = c_license_analyze_register_rsp((char*)response);
                     if (err == UTIL_SUCCESS) {
                         RTK_LOGI(TAG, "Device registration successful\n");
                         c_mmi_storage_save();
-
-                        mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
-                        // 必须要配置evt_cb，否则会导致sdk运行异常
-                        mmi_config.evt_cb = mmi_event_callback;  // 注册事件回调函数，详细说明见下文
-                        // 配置工作模式
-                        mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
-                        mmi_config.text_mode = C_MMI_TEXT_MODE_BOTH;
-                        // 配置上下行音频数据格式
-                        mmi_config.upstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
-                        mmi_config.downstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
-                        // 配置缓冲区大小
-                        mmi_config.recorder_rb_size = 8 * 1024;
-                        mmi_config.player_rb_size = 8 * 1024;
-
-                        c_mmi_config(&mmi_config);
-                        // 设置音色，需要在 c_mmi_config 后调用
-                        c_mmi_set_voice_id("longxiaochun_v2");
                     } else {
                         RTK_LOGE(TAG, "Device registration failed with error code: %d\n", err);
                     }
@@ -196,13 +196,8 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
                     RTK_LOGE(TAG, "Failed to get response from license server\n");
                 }
             }
-            else {
-                RTK_LOGE(TAG, "Failed to generate register string\n");
-            }
         }
-        else {
-            RTK_LOGI(TAG, "Device is already registered\n");
-        }
+        c_mmi_storage_set_api_key(api_key);
         return 0;
     } else {
         return -1;
