@@ -14,6 +14,7 @@ target_include_directories(
     ${BASEDIR}/component/network/cJSON
     ${BASEDIR}/component/network/sntp
     ${BASEDIR}/component/network/httpc
+    ${BASEDIR}/component/network/websocket
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/include/c_mmi_cmd
     ${CMAKE_CURRENT_LIST_DIR}/include/c_utils
