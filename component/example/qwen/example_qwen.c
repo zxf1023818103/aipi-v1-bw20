@@ -2,6 +2,7 @@
 #include <ameba_soc.h>
 #include <os_wrapper.h>
 #include <httpc.h>
+#include <wsclient_api.h>
 
 #include <c_mmi.h>
 #include <lib_c_license.h>
@@ -153,6 +154,34 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
     return json;
 }
 
+wsclient_context *mmi_wss_connect(void)
+{
+    const char ws_version[] = "13";
+
+    char url[128];
+    snprintf("wss://%s", c_mmi_get_wss_host());
+    wsclient_context* ws = create_wsclient(url, atoi(c_mmi_get_wss_port), c_mmi_get_wss_api(), NULL, 1024 * 8, 1024 * 8, 5);
+    if (ws) {
+        ws->ca_cert = g_ali_cert;
+        ws_handshake_header_set_version(ws, ws_version, sizeof ws_version - 1);
+        ws_handshake_header_custom_token(ws, c_mmi_get_wss_header());
+        int ret = ws_connect_url(ws);
+        if (ret >= 0) {
+            return ws;
+        }
+        else {
+            RTK_LOGE(TAG, "Failed to connect to %s.\n", url);
+        }
+        ws_close(&ws);
+    }
+    return NULL;
+}
+
+void handle_ws_message(wsclient_context **ws, int, enum opcode_type)
+{
+
+}
+
 /// @brief License 模式初始化
 /// @param  
 /// @return 
@@ -249,7 +278,10 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
             }
         }
 
-        
+        wsclient_context *ws = mmi_wss_connect();
+        if (ws) {
+            ws_dispatch(handle_ws_message);
+        }
 
         return 0;
     } else {
