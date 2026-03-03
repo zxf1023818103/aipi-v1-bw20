@@ -207,7 +207,7 @@ static int device_register(char *ws_id, char *app_id, char *app_secret, char *de
 
         char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
         snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
-        // 根据时间戳timestamp，生成注册信息字串req
+
         char request[512];
         if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
             cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/device/v1/register", (uint8_t*)request, strlen(request));
@@ -290,21 +290,9 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
 {
     if (c_mmi_sdk_init() == UTIL_SUCCESS) {
         mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
-        // 必须要配置evt_cb，否则会导致sdk运行异常
-        mmi_config.evt_cb = mmi_event_callback;  // 注册事件回调函数，详细说明见下文
-        // 配置工作模式
-        mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
-        mmi_config.text_mode = C_MMI_TEXT_MODE_BOTH;
-        // 配置上下行音频数据格式
-        mmi_config.upstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
-        mmi_config.downstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
-        // 配置缓冲区大小
-        mmi_config.recorder_rb_size = 8 * 1024;
-        mmi_config.player_rb_size = 8 * 1024;
-
+        mmi_config.evt_cb = mmi_event_callback;
         c_mmi_config(&mmi_config);
-        // 设置音色，需要在 c_mmi_config 后调用
-        c_mmi_set_voice_id("longxiaochun_v2");
+        // c_mmi_set_voice_id("longxiaochun_v2");
 
         c_mmi_storage_set_api_key(api_key);
         
@@ -349,7 +337,7 @@ void qwen_sdk_test_routine(void *arg)
                     int ret = select(ws->sockfd + 1, &read_fds, &write_fds, &except_fds, &timeout);
                     if (ret > 0) {
                         if (FD_ISSET(ws->sockfd, &read_fds)) {
-                            ws_poll(0, &ws);
+                            ws_poll(100, &ws);
                         }
                         if (FD_ISSET(ws->sockfd, &write_fds)) {
                             uint8_t opcode;
