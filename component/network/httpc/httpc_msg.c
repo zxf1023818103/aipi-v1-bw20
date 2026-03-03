@@ -8,6 +8,8 @@ extern uint8_t httpc_http_1_0_request_used;
 
 size_t httpc_tmp_buf_size = 2048;
 
+static char *strstri(const char *inBuffer, const char *inSearchStr);
+
 static size_t atoh(char *str)
 {
 	size_t i;
@@ -359,8 +361,8 @@ int httpc_response_read_header(struct httpc_conn *conn)
 			if (memcmp(conn->response.status, status_301, strlen(status_301)) == 0 ||
 				memcmp(conn->response.status, status_302, strlen(status_302)) == 0) {
 				ptr = conn->response.status + conn->response.status_len;
-				if (strstr(ptr, "Location:")) {
-					ptr = (char *) strstr(ptr, "Location:") + strlen("Location:");
+				if (strstri(ptr, "Location:")) {
+					ptr = (char *) strstri(ptr, "Location:") + strlen("Location:");
 
 					while (ptr < (conn->response.header + conn->response.header_len)) {
 						if (*ptr != ' ') {
@@ -392,8 +394,8 @@ int httpc_response_read_header(struct httpc_conn *conn)
 			// get content-type
 			ptr = conn->response.status + conn->response.status_len;
 
-			if (strstr(ptr, "Content-Type:")) {
-				ptr = (char *) strstr(ptr, "Content-Type:") + strlen("Content-Type:");
+			if (strstri(ptr, "Content-Type:")) {
+				ptr = (char *) strstri(ptr, "Content-Type:") + strlen("Content-Type:");
 
 				while (ptr < (conn->response.header + conn->response.header_len)) {
 					if (*ptr != ' ') {
@@ -424,14 +426,11 @@ int httpc_response_read_header(struct httpc_conn *conn)
 			// get content-length
 			ptr = conn->response.status + conn->response.status_len;
 
-			if (strstr(ptr, "Content-Length:") || strstr(ptr, "content-length:")) {
+			if (strstri(ptr, "Content-Length:")) {
 				char *length_ptr = NULL;
-				ptr = (char *) strstr(ptr, "Content-Length:");
+				ptr = (char *) strstri(ptr, "Content-Length:");
 				if (ptr != NULL) {
 					ptr += strlen("Content-Length:");
-				} else {
-					ptr = conn->response.status + conn->response.status_len;
-					ptr = (char *) strstr(ptr, "content-length:") + strlen("content-length:");
 				}
 
 				while (ptr < (conn->response.header + conn->response.header_len)) {
@@ -474,8 +473,8 @@ int httpc_response_read_header(struct httpc_conn *conn)
 			// get Transfer-Encoding
 			ptr = conn->response.status + conn->response.status_len;
 
-			if (strstr(ptr, "Transfer-Encoding:")) {
-				ptr = strstr(ptr, "Transfer-Encoding:") + strlen("Transfer-Encoding:");
+			if (strstri(ptr, "Transfer-Encoding:")) {
+				ptr = strstri(ptr, "Transfer-Encoding:") + strlen("Transfer-Encoding:");
 
 				while (ptr < (conn->response.header + conn->response.header_len)) {
 					if (*ptr != ' ') {
@@ -649,19 +648,19 @@ static int __tolower(int c)
 {
 	return (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
 }
-static uint8_t *strstri(const uint8_t *inBuffer, const uint8_t *inSearchStr)
+static char *strstri(const char *inBuffer, const char *inSearchStr)
 {
-	uint8_t  *currBuffPointer = (uint8_t *)inBuffer;
+	char  *currBuffPointer = (char *)inBuffer;
 
 	while (*currBuffPointer != 0x00) {
-		uint8_t *compareOne = (uint8_t *)currBuffPointer;
-		uint8_t *compareTwo = (uint8_t *)inSearchStr;
+		char *compareOne = (char *)currBuffPointer;
+		char *compareTwo = (char *)inSearchStr;
 
 		while (__tolower(*compareOne) == __tolower(*compareTwo)) {
 			compareOne++;
 			compareTwo++;
 			if (*compareTwo == 0x00) {
-				return (uint8_t *) currBuffPointer;
+				return (char *) currBuffPointer;
 			}
 
 		}
@@ -693,8 +692,8 @@ int httpc_response_get_header_field(struct httpc_conn *conn, char *field, char *
 	}
 
 	/*rfc2616:section-4.2: Field names are case-insensitive.*/
-	if (strstri((uint8_t *)conn->response.header, (uint8_t *)field_buf)) {
-		ptr = (char *) strstri((uint8_t *)conn->response.header, (uint8_t *)field_buf) + strlen(field_buf);
+	if (strstri(conn->response.header, field_buf)) {
+		ptr = (char *) strstri(conn->response.header, field_buf) + strlen(field_buf);
 
 		while (ptr < (conn->response.header + conn->response.header_len)) {
 			if (*ptr != ' ') {
