@@ -75,9 +75,10 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
     return UTIL_SUCCESS;
 }
 
-static uint8_t* mmi_http_request(char *host, char *method, char *resource, char *content_type, uint8_t *content, size_t content_len)
+static cJSON* mmi_http_request(char *host, char *method, char *resource, char *content_type, uint8_t *content, size_t content_len)
 {
-    uint8_t *response = NULL;
+    // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
+    cJSON *json = NULL;
     struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, g_ali_cert);
     if (conn) {
         if (httpc_conn_connect(conn, host, 443, 0) == 0) {
@@ -87,10 +88,10 @@ static uint8_t* mmi_http_request(char *host, char *method, char *resource, char 
             int ret = httpc_request_write_data(conn, content, content_len);
             if (ret > 0 && (size_t)ret == content_len) {
                 if (httpc_response_read_header(conn) == 0) {
-                    httpc_conn_dump_header(conn);
+                    // httpc_conn_dump_header(conn);
                     if (httpc_response_is_status(conn, (char *)"200 OK")) {
                         size_t max_response_len = 1024;
-                        response = util_malloc(max_response_len);
+                        uint8_t *response = util_malloc(max_response_len);
                         if (response) {
                             int total_size = 0;
                             memset(response, 0, max_response_len);
@@ -117,11 +118,15 @@ static uint8_t* mmi_http_request(char *host, char *method, char *resource, char 
                                 }
                             }
 
-                            if (total_size == 0) {
-                                RTK_LOGE(TAG, "HTTP response is empty\n");
-                                util_free(response);
-                                response = NULL;
+                            if (total_size > 0) {
+                                RTK_LOGI(TAG, "Read response: %s\n", response);
+                                json = cJSON_Parse((char*)response);
                             }
+                            else {
+                                RTK_LOGE(TAG, "HTTP response is empty\n");
+                            }
+
+                            util_free(response);
                         }
                     } else {
                         RTK_LOGE(TAG, "HTTP request failed with status other than 200\n");
@@ -143,7 +148,7 @@ static uint8_t* mmi_http_request(char *host, char *method, char *resource, char 
         RTK_LOGE(TAG, "Failed to create httpc connection");
     }
     httpc_conn_free(conn);
-    return response;
+    return json;
 }
 
 /// @brief License 模式初始化
@@ -181,17 +186,26 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
             // 根据时间戳timestamp，生成注册信息字串req
             char request[512];
             if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
-                uint8_t *response = mmi_http_request("bailian.multimodalagent.aliyuncs.com", "POST", "/api/device/v1/register", "application/json", (uint8_t*)request, strlen(request));
-                if (response) {
-                    int32_t err = c_license_analyze_register_rsp((char*)response);
-                    if (err == UTIL_SUCCESS) {
-                        RTK_LOGI(TAG, "Device registration successful\n");
-                        c_mmi_storage_save();
-                    } else {
-                        RTK_LOGE(TAG, "Device registration failed with error code: %d\n", err);
+                cJSON *json = mmi_http_request("bailian.multimodalagent.aliyuncs.com", "POST", "/api/device/v1/register", "application/json", (uint8_t*)request, strlen(request));
+                if (json) {
+                    cJSON *data = cJSON_GetObjectItem(json, "data");
+                    if (data && !cJSON_IsNull(data)) {
+                        char *data_str = cJSON_Print(data);
+                        if (data_str) {
+                            int32_t err = c_license_analyze_register_rsp(data_str);
+                            if (err == UTIL_SUCCESS) {
+                                RTK_LOGI(TAG, "Device registration successful\n");
+                                c_mmi_storage_save();
+                            } else {
+                                RTK_LOGE(TAG, "Device registration failed with error code: %d\n", err);
+                            }
+                            cJSON_free(data_str);
+                        }
                     }
-                    util_free(response);
-                    c_mmi_storage_save();
+                    else {
+                        RTK_LOGE(TAG, "Failed to find data object\n");
+                    }
+                    cJSON_Delete(json);
                 } else {
                     RTK_LOGE(TAG, "Failed to get response from license server\n");
                 }
