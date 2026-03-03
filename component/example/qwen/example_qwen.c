@@ -17,6 +17,8 @@
 
 #define TAG "QWEN"
 
+#define MMI_END_POINT "bailian.multimodalagent.aliyuncs.com"
+
 static int32_t mmi_event_callback(uint32_t event, void *param)
 {
     char *text;
@@ -75,14 +77,14 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
     return UTIL_SUCCESS;
 }
 
-static cJSON* mmi_http_request(char *host, char *method, char *resource, char *content_type, uint8_t *content, size_t content_len)
+static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, size_t content_len)
 {
     // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
     cJSON *json = NULL;
     struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, g_ali_cert);
     if (conn) {
         if (httpc_conn_connect(conn, host, 443, 0) == 0) {
-            httpc_request_write_header_start(conn, method, resource, content_type, content_len);
+            httpc_request_write_header_start(conn, "POST", resource, "application/json", content_len);
             httpc_request_write_header(conn, "Connection", "close");
             httpc_request_write_header_finish(conn);
             int ret = httpc_request_write_data(conn, content, content_len);
@@ -119,7 +121,7 @@ static cJSON* mmi_http_request(char *host, char *method, char *resource, char *c
                             }
 
                             if (total_size > 0) {
-                                RTK_LOGI(TAG, "Read response: %s\n", response);
+                                // RTK_LOGI(TAG, "Read response: %s\n", response);
                                 json = cJSON_Parse((char*)response);
                             }
                             else {
@@ -174,6 +176,7 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
         // 设置音色，需要在 c_mmi_config 后调用
         c_mmi_set_voice_id("longxiaochun_v2");
         
+        // 设备注册
         if (c_license_device_is_registered() == 0) {
             c_mmi_storage_reset();
             c_mmi_storage_set_ws_id(ws_id);
@@ -181,12 +184,12 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
             c_license_set_app_secret_str(app_secret);
             c_mmi_set_device_name(device_name);
 
-            char time_ms_str[14];
-            snprintf(time_ms_str, sizeof(time_ms_str), "%" PRId64, util_get_timestamp());
+            char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
+            snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
             // 根据时间戳timestamp，生成注册信息字串req
             char request[512];
             if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
-                cJSON *json = mmi_http_request("bailian.multimodalagent.aliyuncs.com", "POST", "/api/device/v1/register", "application/json", (uint8_t*)request, strlen(request));
+                cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/device/v1/register", (uint8_t*)request, strlen(request));
                 if (json) {
                     cJSON *data = cJSON_GetObjectItem(json, "data");
                     if (data && !cJSON_IsNull(data)) {
@@ -207,11 +210,47 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
                     }
                     cJSON_Delete(json);
                 } else {
-                    RTK_LOGE(TAG, "Failed to get response from license server\n");
+                    RTK_LOGE(TAG, "Failed to get register response from license server\n");
                 }
             }
         }
         c_mmi_storage_set_api_key(api_key);
+
+        // 设备登录
+        if (c_license_is_token_expire(util_get_timestamp()) == 0) {
+            char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
+            snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
+            char request[512];
+            if (c_license_gen_get_token_str(request, sizeof request, time_ms_str, api_key) == UTIL_SUCCESS) {
+                // 获取服务端返回登录信息
+                cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/token/v1/getToken", (uint8_t*)request, strlen(request));
+                if (json) {
+                    cJSON *data = cJSON_GetObjectItem(json, "data");
+                    if (data && !cJSON_IsNull(data)) {
+                        char *data_str = cJSON_Print(data);
+                        if (data_str) {
+                            int32_t err = c_license_analyze_get_token_rsp(data_str);
+                            if (err == UTIL_SUCCESS) {
+                                RTK_LOGI(TAG, "Get token successful\n");
+                                c_mmi_storage_save();
+                            } else {
+                                RTK_LOGE(TAG, "Get token failed with error code: %d\n", err);
+                            }
+                            cJSON_free(data_str);
+                        }
+                    }
+                    else {
+                        RTK_LOGE(TAG, "Failed to find data object\n");
+                    }
+                }
+                else {
+                    RTK_LOGE(TAG, "Failed to get token response from license server\n");
+                }
+            }
+        }
+
+        
+
         return 0;
     } else {
         return -1;
