@@ -71,6 +71,7 @@ void *wss_tls_connect(int *sock, char *host, int port)
 			printf("\n[WSCLIENT] ERROR: ssl_setup %d\n", ret);
 			goto exit;
 		}
+		mbedtls_ssl_set_hostname(ssl, host);
 	} else {
 		printf("\n[WSCLIENT] ERROR: malloc\n");
 		ret = -1;

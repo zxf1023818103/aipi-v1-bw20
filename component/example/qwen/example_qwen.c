@@ -3,6 +3,7 @@
 #include <os_wrapper.h>
 #include <httpc.h>
 #include <wsclient_api.h>
+#include <lwip/sockets.h>
 
 #include <c_mmi.h>
 #include <lib_c_license.h>
@@ -82,7 +83,7 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
 {
     // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
     cJSON *json = NULL;
-    struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, g_ali_cert);
+    struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, g_bailian_cert);
     if (conn) {
         if (httpc_conn_connect(conn, host, 443, 0) == 0) {
             httpc_request_write_header_start(conn, "POST", resource, "application/json", content_len);
@@ -156,30 +157,130 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
 
 wsclient_context *mmi_wss_connect(void)
 {
-    const char ws_version[] = "13";
+    char *wss_host = c_mmi_get_wss_host();
+    char *wss_port = c_mmi_get_wss_port();
+    char *wss_api = c_mmi_get_wss_api();
+    char *wss_header = c_mmi_get_wss_header();
+    // char *wss_host_global = c_mmi_get_wss_host_global();
 
-    char url[128];
-    snprintf("wss://%s", c_mmi_get_wss_host());
-    wsclient_context* ws = create_wsclient(url, atoi(c_mmi_get_wss_port), c_mmi_get_wss_api(), NULL, 1024 * 8, 1024 * 8, 5);
+    // RTK_LOGI(TAG, "wss_host=%s\n", wss_host);
+    // RTK_LOGI(TAG, "wss_host_global=%s\n", wss_host_global);
+    // RTK_LOGI(TAG, "wss_port=%s\n", wss_port);
+    // RTK_LOGI(TAG, "wss_api=%s\n", wss_api);
+    // RTK_LOGI(TAG, "wss_header=%s\n", wss_header);
+
+    char url[32];
+    snprintf(url, sizeof url, "wss://%s", wss_host);
+    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 1024 * 8, 1);
     if (ws) {
-        ws->ca_cert = g_ali_cert;
-        ws_handshake_header_set_version(ws, ws_version, sizeof ws_version - 1);
-        ws_handshake_header_custom_token(ws, c_mmi_get_wss_header());
+        ws->ca_cert = g_dashscope_cert;
+        ws_handshake_header_custom_token(ws, wss_header, strlen(wss_header));
         int ret = ws_connect_url(ws);
         if (ret >= 0) {
             return ws;
         }
         else {
-            RTK_LOGE(TAG, "Failed to connect to %s.\n", url);
+            RTK_LOGE(TAG, "Failed to connect to %s\n", url);
         }
         ws_close(&ws);
     }
     return NULL;
 }
 
-void handle_ws_message(wsclient_context **ws, int, enum opcode_type)
+static void ws_handler_data(wsclient_context **wsclient, int data_len, enum opcode_type opcode)
 {
+	wsclient_context *ws = *wsclient;
+    c_mmi_analyze_recv_data(opcode, ws->receivedData, data_len);
+}
 
+/// @brief 设备注册
+/// @return 
+static int device_register(char *ws_id, char *app_id, char *app_secret, char *device_name)
+{
+    int ret = UTIL_ERR_FAIL;
+    if (c_license_device_is_registered() == 0) {
+        c_mmi_storage_reset();
+        c_mmi_storage_set_ws_id(ws_id);
+        c_mmi_storage_set_app_id_str(app_id);
+        c_license_set_app_secret_str(app_secret);
+        c_mmi_set_device_name(device_name);
+
+        char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
+        snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
+        // 根据时间戳timestamp，生成注册信息字串req
+        char request[512];
+        if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
+            cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/device/v1/register", (uint8_t*)request, strlen(request));
+            if (json) {
+                cJSON *data = cJSON_GetObjectItem(json, "data");
+                if (data && !cJSON_IsNull(data)) {
+                    char *data_str = cJSON_Print(data);
+                    if (data_str) {
+                        int32_t err = c_license_analyze_register_rsp(data_str);
+                        if (err == UTIL_SUCCESS) {
+                            ret = c_mmi_storage_save();
+                        }
+                        else {
+                            RTK_LOGE(TAG, "Device registration failed with error code: %d\n", err);
+                        }
+                        cJSON_free(data_str);
+                    }
+                }
+                else {
+                    RTK_LOGE(TAG, "Failed to find data object\n");
+                }
+                cJSON_Delete(json);
+            } else {
+                RTK_LOGE(TAG, "Failed to get register response from license server\n");
+            }
+        }
+    }
+    else {
+        ret = UTIL_SUCCESS;
+    }
+    return ret;
+}
+
+/// @brief 设备登录
+/// @return 
+static int device_login(char *api_key)
+{
+    int ret = UTIL_ERR_FAIL;
+    if (c_license_is_token_expire(util_get_timestamp()) == 0) {
+        char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
+        snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
+        char request[512];
+        if (c_license_gen_get_token_str(request, sizeof request, time_ms_str, api_key) == UTIL_SUCCESS) {
+            // 获取服务端返回登录信息
+            cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/token/v1/getToken", (uint8_t*)request, strlen(request));
+            if (json) {
+                cJSON *data = cJSON_GetObjectItem(json, "data");
+                if (data && !cJSON_IsNull(data)) {
+                    char *data_str = cJSON_Print(data);
+                    if (data_str) {
+                        int32_t err = c_license_analyze_get_token_rsp(data_str);
+                        if (err == UTIL_SUCCESS) {
+                            RTK_LOGI(TAG, "Get token successful\n");
+                            ret = c_mmi_storage_save();
+                        } else {
+                            RTK_LOGE(TAG, "Get token failed with error code: %d\n", err);
+                        }
+                        cJSON_free(data_str);
+                    }
+                }
+                else {
+                    RTK_LOGE(TAG, "Failed to find data object\n");
+                }
+            }
+            else {
+                RTK_LOGE(TAG, "Failed to get token response from license server\n");
+            }
+        }
+    }
+    else {
+        ret = UTIL_SUCCESS;
+    }
+    return ret;
 }
 
 /// @brief License 模式初始化
@@ -204,89 +305,14 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
         c_mmi_config(&mmi_config);
         // 设置音色，需要在 c_mmi_config 后调用
         c_mmi_set_voice_id("longxiaochun_v2");
-        
-        // 设备注册
-        if (c_license_device_is_registered() == 0) {
-            c_mmi_storage_reset();
-            c_mmi_storage_set_ws_id(ws_id);
-            c_mmi_storage_set_app_id_str(app_id);
-            c_license_set_app_secret_str(app_secret);
-            c_mmi_set_device_name(device_name);
 
-            char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
-            snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
-            // 根据时间戳timestamp，生成注册信息字串req
-            char request[512];
-            if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
-                cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/device/v1/register", (uint8_t*)request, strlen(request));
-                if (json) {
-                    cJSON *data = cJSON_GetObjectItem(json, "data");
-                    if (data && !cJSON_IsNull(data)) {
-                        char *data_str = cJSON_Print(data);
-                        if (data_str) {
-                            int32_t err = c_license_analyze_register_rsp(data_str);
-                            if (err == UTIL_SUCCESS) {
-                                RTK_LOGI(TAG, "Device registration successful\n");
-                                c_mmi_storage_save();
-                            } else {
-                                RTK_LOGE(TAG, "Device registration failed with error code: %d\n", err);
-                            }
-                            cJSON_free(data_str);
-                        }
-                    }
-                    else {
-                        RTK_LOGE(TAG, "Failed to find data object\n");
-                    }
-                    cJSON_Delete(json);
-                } else {
-                    RTK_LOGE(TAG, "Failed to get register response from license server\n");
-                }
-            }
-        }
         c_mmi_storage_set_api_key(api_key);
-
-        // 设备登录
-        if (c_license_is_token_expire(util_get_timestamp()) == 0) {
-            char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
-            snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
-            char request[512];
-            if (c_license_gen_get_token_str(request, sizeof request, time_ms_str, api_key) == UTIL_SUCCESS) {
-                // 获取服务端返回登录信息
-                cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/token/v1/getToken", (uint8_t*)request, strlen(request));
-                if (json) {
-                    cJSON *data = cJSON_GetObjectItem(json, "data");
-                    if (data && !cJSON_IsNull(data)) {
-                        char *data_str = cJSON_Print(data);
-                        if (data_str) {
-                            int32_t err = c_license_analyze_get_token_rsp(data_str);
-                            if (err == UTIL_SUCCESS) {
-                                RTK_LOGI(TAG, "Get token successful\n");
-                                c_mmi_storage_save();
-                            } else {
-                                RTK_LOGE(TAG, "Get token failed with error code: %d\n", err);
-                            }
-                            cJSON_free(data_str);
-                        }
-                    }
-                    else {
-                        RTK_LOGE(TAG, "Failed to find data object\n");
-                    }
-                }
-                else {
-                    RTK_LOGE(TAG, "Failed to get token response from license server\n");
-                }
-            }
+        
+        if (device_register(ws_id, app_id, app_secret, device_name) == UTIL_SUCCESS) {
+            return device_login(api_key);
         }
-
-        wsclient_context *ws = mmi_wss_connect();
-        if (ws) {
-            ws_dispatch(handle_ws_message);
-        }
-
-        return 0;
-    } else {
-        return -1;
     }
+    return UTIL_ERR_FAIL;
 }
 
 void qwen_sdk_test_routine(void *arg)
@@ -306,7 +332,43 @@ void qwen_sdk_test_routine(void *arg)
     char *device_name = getenv("DEVICE_NAME");
     char *api_key = getenv("API_KEY");
     if (ws_id && app_id && app_secret && device_name && api_key) {
-        qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key);
+        if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
+            wsclient_context *ws = mmi_wss_connect();
+            if (ws) {
+                ws_dispatch(ws_handler_data);
+                for (;;) {
+                    fd_set read_fds, write_fds, except_fds;
+                    FD_ZERO(&read_fds);
+                    FD_SET(ws->sockfd, &read_fds);
+                    memcpy(&write_fds, &read_fds, sizeof read_fds);
+                    memcpy(&except_fds, &read_fds, sizeof read_fds);
+
+                    struct timeval timeout = {
+                        .tv_sec = 1,
+                    };
+                    int ret = select(ws->sockfd + 1, &read_fds, &write_fds, &except_fds, &timeout);
+                    if (ret > 0) {
+                        if (FD_ISSET(ws->sockfd, &read_fds)) {
+                            ws_poll(0, &ws);
+                        }
+                        if (FD_ISSET(ws->sockfd, &write_fds)) {
+                            uint8_t opcode;
+                            static uint8_t data[1024 * 8];
+                            size_t len = c_mmi_get_send_data(&opcode, data, sizeof data);
+                            if (len > 0) {
+                                if (ws_send_with_opcode((char*)data, len, 1, opcode, 1, ws) != 0) {
+                                    break;
+                                }
+                            }
+                        }
+                        if (FD_ISSET(ws->sockfd, &except_fds)) {
+                            break;
+                        }
+                    }
+                }
+                ws_close(&ws);
+            }
+        }
     }
     else {
         RTK_LOGS(TAG, RTK_LOG_ERROR, "Missing required env variables for license initialization\n");
