@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <ameba_soc.h>
 #include <os_wrapper.h>
+#include <os_wrapper_time.h>
 #include <atcmd_service.h>
 #include <httpc.h>
 #include <wsclient_api.h>
@@ -24,7 +25,9 @@
 
 #define MMI_END_POINT "bailian.multimodalagent.aliyuncs.com"
 
-static rtos_sema_t s_wss_ready_sem;
+static rtos_sema_t s_wss_ready_sem, s_audio_ready_sem;
+
+static uint8_t s_audio_ready;
 
 static int32_t mmi_event_callback(uint32_t event, void *param)
 {
@@ -34,6 +37,7 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
     switch (event) {
         case C_MMI_EVENT_USER_CONFIG: {
             RTK_LOGI(TAG, "C_MMI_EVENT_USER_CONFIG\n");
+            c_mmi_set_voice_id("longanyang");
             c_mmi_reset_dialog_id();
             break;
         }
@@ -70,7 +74,7 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
             break;
         }
         case C_MMI_EVENT_LLM_INCOMPLETE: {
-            RTK_LOGI(TAG, "C_MMI_EVENT_LLM_INCOMPLETE text=%s\n", text);
+            // RTK_LOGI(TAG, "C_MMI_EVENT_LLM_INCOMPLETE text=%s\n", text);
             break;
         }
         case C_MMI_EVENT_LLM_COMPLETE:
@@ -78,11 +82,14 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
             break;
         case C_MMI_EVENT_TTS_START: {
             RTK_LOGI(TAG, "C_MMI_EVENT_TTS_START\n");
-            // dummy_player_start();
+            // rtos_sema_give(s_audio_ready_sem);
+            s_audio_ready = 1;
             break;
         }
         case C_MMI_EVENT_TTS_END: {
             RTK_LOGI(TAG, "C_MMI_EVENT_TTS_END\n");
+            // rtos_sema_take(s_audio_ready_sem, RTOS_SEMA_MAX_COUNT);
+            s_audio_ready = 0;
             break;
         }
         default: {
@@ -300,7 +307,7 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
     if (c_mmi_sdk_init() == UTIL_SUCCESS) {
         mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
         mmi_config.evt_cb = mmi_event_callback;
-        mmi_config.text_mode = C_MMI_TEXT_MODE_NONE;
+        mmi_config.text_mode = C_MMI_TEXT_MODE_LLM_ONLY;
         mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
         c_mmi_config(&mmi_config);
         c_mmi_storage_set_api_key(api_key);
@@ -379,20 +386,59 @@ void qwen_sdk_init_routine(void *arg)
     rtos_task_delete(NULL);
 }
 
+static void audio_routine(void *args)
+{
+    (void) args;
+
+    static uint8_t audio_data[8 * 1024];
+    for (;;) {
+        while (s_audio_ready == 0) {
+            rtos_time_delay_ms(1000);
+        }
+        while (1) {
+            uint32_t nbytes_read = c_mmi_get_player_data(audio_data, sizeof audio_data);
+            if (nbytes_read != 0) {
+                RTK_LOGI(TAG, "c_mmi_get_player_data %u bytes\n", nbytes_read);
+            }
+            else {
+                break;
+            }
+        }
+        s_audio_ready = 0;
+    }
+}
+
 void app_example(void)
 {
     rtos_sema_create_binary(&s_wss_ready_sem);
+    rtos_sema_create_binary(&s_audio_ready_sem);
     if (rtos_task_create(NULL, "qwen_sdk_init", qwen_sdk_init_routine, NULL, 1024 * 8, 1) != RTK_SUCCESS) {
 		RTK_LOGE(TAG, "%s rtos_task_create qwen_sdk_init failed\n", __FUNCTION__);
 	}
     rtos_task_create(NULL, "wss", wss_routine, NULL, 1024 * 4, 1);
+    rtos_task_create(NULL, "audio", audio_routine, NULL, 1024 * 4, 2);
 }
 
-void at_text_set(u16 argc, char **argv)
+void at_chat_set(u16 argc, char **argv)
 {
     if (argc == 2) {
         char *text = argv[1];
         if (c_mmi_question(text) == 0) {
+            at_printf("\r\nOK\r\n");
+            return;
+        }
+    }
+    else {
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Invalid number of parameters\n");
+    }
+    at_printf("\r\nERROR\r\n");
+}
+
+void at_tts_set(u16 argc, char **argv)
+{
+    if (argc == 2) {
+        char *text = argv[1];
+        if (c_mmi_tts(text) == 0) {
             at_printf("\r\nOK\r\n");
             return;
         }

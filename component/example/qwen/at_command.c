@@ -9,6 +9,7 @@ const log_item_t at_custom_items[] = {
 	{"+LINKKEYCONFIG?", at_linkkeyconfig_query},
     {"+ENV?", at_env_query},
     {"+ENV", at_env_set},
-    {"+TEXT", at_text_set},
+    {"+CHAT", at_chat_set},
+    {"+TTS", at_tts_set},
     {"+SPEECHPAUSE", at_pause_speech},
 };
