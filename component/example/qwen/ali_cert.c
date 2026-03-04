@@ -1,4 +1,4 @@
-char g_bailian_cert[] = "-----BEGIN CERTIFICATE-----\n"
+const char *g_bailian_cert = "-----BEGIN CERTIFICATE-----\n"
 "MIIETjCCAzagAwIBAgINAe5fIh38YjvUMzqFVzANBgkqhkiG9w0BAQsFADBMMSAw\n"
 "HgYDVQQLExdHbG9iYWxTaWduIFJvb3QgQ0EgLSBSMzETMBEGA1UEChMKR2xvYmFs\n"
 "U2lnbjETMBEGA1UEAxMKR2xvYmFsU2lnbjAeFw0xODExMjEwMDAwMDBaFw0yODEx\n"
@@ -25,7 +25,7 @@ char g_bailian_cert[] = "-----BEGIN CERTIFICATE-----\n"
 "SPY=\n"
 "-----END CERTIFICATE-----";
 
-char g_dashscope_cert[] = "-----BEGIN CERTIFICATE-----\n"
+const char *g_dashscope_cert = "-----BEGIN CERTIFICATE-----\n"
 "MIIEmDCCA4CgAwIBAgIRAIHlq5jkbzW5HC/6F4cYyFowDQYJKoZIhvcNAQELBQAw\n"
 "TDEgMB4GA1UECxMXR2xvYmFsU2lnbiBSb290IENBIC0gUjMxEzARBgNVBAoTCkds\n"
 "b2JhbFNpZ24xEzARBgNVBAMTCkdsb2JhbFNpZ24wHhcNMjQwOTE4MDMxNDM4WhcN\n"

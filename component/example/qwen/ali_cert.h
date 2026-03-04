@@ -5,8 +5,8 @@
 extern "C" {
 #endif /* __cplusplus */
 
-extern char g_bailian_cert[];
-extern char g_dashscope_cert[];
+extern const char *g_bailian_cert;
+extern const char *g_dashscope_cert;
 
 #ifdef __cplusplus
 }

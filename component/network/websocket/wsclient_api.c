@@ -296,11 +296,7 @@ void ws_poll(int timeout, wsclient_context **wsclient)   // timeout in milliseco
 		FD_ZERO(&u_r.rfds);
 		FD_ZERO(&u_w.wfds);
 		FD_SET(wsc->sockfd, &u_r.rfds);
-		if (rtos_queue_peek(wsc->ready_send_buf, (void *)&tmp_buf, 0) == RTK_SUCCESS) {
-			if (tmp_buf->tx_len > 0) {
-				FD_SET(wsc->sockfd, &u_w.wfds);
-			}
-		}
+		FD_SET(wsc->sockfd, &u_w.wfds);
 		ret = select(wsc->sockfd + 1, &u_r.rfds, &u_w.wfds, 0, timeout > 0 ? &tv : 0);
 		if (ret == 0) {
 			WSCLIENT_DEBUG("select() timeout!\n");
