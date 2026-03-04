@@ -225,4 +225,4 @@ int util_printf(const char* format, ...)
     return ret;
 }
 
-uint8_t g_util_log_lv = UTIL_LOG_LV_ALL;
+uint8_t g_util_log_lv = UTIL_LOG_LV_INFO;
