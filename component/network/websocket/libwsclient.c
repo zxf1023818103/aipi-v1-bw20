@@ -379,21 +379,6 @@ void ws_client_close(wsclient_context *wsclient)
 		wsclient->origin = NULL;
 	}
 
-	if (wsclient->client_cert) {
-		ws_free(wsclient->client_cert);
-		wsclient->client_cert = NULL;
-	}
-
-	if (wsclient->client_key) {
-		ws_free(wsclient->client_key);
-		wsclient->client_key = NULL;
-	}
-
-	if (wsclient->ca_cert) {
-		ws_free(wsclient->ca_cert);
-		wsclient->ca_cert = NULL;
-	}
-
 //To fix the ws_getReadyState() after ws_close() faied issue, then free the context in the example
 	/*	if(wsclient){
 			ws_free(wsclient);
@@ -914,21 +899,6 @@ void wss_client_close(wsclient_context *wsclient)
 	if (wsclient->origin) {
 		ws_free(wsclient->origin);
 		wsclient->origin = NULL;
-	}
-
-	if (wsclient->client_cert) {
-		ws_free(wsclient->client_cert);
-		wsclient->client_cert = NULL;
-	}
-
-	if (wsclient->client_key) {
-		ws_free(wsclient->client_key);
-		wsclient->client_key = NULL;
-	}
-
-	if (wsclient->ca_cert) {
-		ws_free(wsclient->ca_cert);
-		wsclient->ca_cert = NULL;
 	}
 
 //To fix the ws_getReadyState() after ws_close() faied issue, then free the context in the example

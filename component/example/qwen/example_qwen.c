@@ -4,6 +4,7 @@
 #include <httpc.h>
 #include <wsclient_api.h>
 #include <lwip/sockets.h>
+#include <lwip_netconf.h>
 
 #include <c_mmi.h>
 #include <lib_c_license.h>
@@ -21,59 +22,70 @@
 
 #define MMI_END_POINT "bailian.multimodalagent.aliyuncs.com"
 
+static rtos_sema_t s_wss_ready_sem;
+
 static int32_t mmi_event_callback(uint32_t event, void *param)
 {
     char *text;
 
     text = param;
     switch (event) {
-        case C_MMI_EVENT_USER_CONFIG:
-            // 开始新对话
+        case C_MMI_EVENT_USER_CONFIG: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_USER_CONFIG\n");
             c_mmi_reset_dialog_id();
             break;
-        case C_MMI_EVENT_DATA_INIT:
-            // Mmi data ready, 开始网络连接
-            // dummy_wss_init();
+        }
+        case C_MMI_EVENT_DATA_INIT: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_DATA_INIT\n");
+            rtos_sema_give(s_wss_ready_sem);
             break;
-        case C_MMI_EVENT_DATA_DEINIT:
-            RTK_LOGW(TAG, "will disconnect");
+        }
+        case C_MMI_EVENT_DATA_DEINIT: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_DATA_DEINIT\n");
             break;
-        case C_MMI_EVENT_SPEECH_START:
-            RTK_LOGD(TAG, "enable recorder when send speech");
+        }
+        case C_MMI_EVENT_SPEECH_START: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_SPEECH_START\n");
             // dummy_player_stop();
             // dummy_recorder_start();
             break;
-        case C_MMI_EVENT_ASR_START:
-            RTK_LOGI(TAG, "event [C_MMI_EVENT_ASR_START]");
+        }
+        case C_MMI_EVENT_ASR_START: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_START\n");
             break;
-        case C_MMI_EVENT_ASR_INCOMPLETE:
-            RTK_LOGD(TAG, "ASR [%s]", text);
+        }
+        case C_MMI_EVENT_ASR_INCOMPLETE: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_INCOMPLETE text=%s\n", text);
             break;
-        case C_MMI_EVENT_ASR_COMPLETE:
-            if (text) {
-                RTK_LOGD(TAG, "ASR C [%s]", text);
-            } else {
-                RTK_LOGD(TAG, "ASR C [NULL]");
-            }
+        }
+        case C_MMI_EVENT_ASR_COMPLETE: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_COMPLETE text=%s\n", text ? text : "(null)");
             break;
-        case C_MMI_EVENT_ASR_END:
-            RTK_LOGD(TAG, "disable record when ASR complete");
+        }
+        case C_MMI_EVENT_ASR_END: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_END\n");
             // dummy_recorder_stop();
             break;
-        case C_MMI_EVENT_LLM_INCOMPLETE:
-            RTK_LOGD(TAG, "LLM [%s]", text);
+        }
+        case C_MMI_EVENT_LLM_INCOMPLETE: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_LLM_INCOMPLETE text=%s\n", text);
             break;
+        }
         case C_MMI_EVENT_LLM_COMPLETE:
-            RTK_LOGD(TAG, "LLM C [%s]", text);
+            RTK_LOGI(TAG, "C_MMI_EVENT_LLM_COMPLETE text=%s\n", text);
             break;
-        case C_MMI_EVENT_TTS_START:
-            RTK_LOGI(TAG, "enable player when dialog start");
+        case C_MMI_EVENT_TTS_START: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_TTS_START\n");
             // dummy_player_start();
             break;
-        case C_MMI_EVENT_TTS_END:
+        }
+        case C_MMI_EVENT_TTS_END: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_TTS_END\n");
             break;
-        default:
+        }
+        default: {
             break;
+        }
     }
 
     return UTIL_SUCCESS;
@@ -83,7 +95,7 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
 {
     // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
     cJSON *json = NULL;
-    struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, g_bailian_cert);
+    struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, (char*)g_bailian_cert);
     if (conn) {
         if (httpc_conn_connect(conn, host, 443, 0) == 0) {
             httpc_request_write_header_start(conn, "POST", resource, "application/json", content_len);
@@ -155,6 +167,12 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
     return json;
 }
 
+static void mmi_ws_handler(wsclient_context **wsclient, int data_len, enum opcode_type opcode)
+{
+	wsclient_context *ws = *wsclient;
+    c_mmi_analyze_recv_data(opcode, ws->receivedData, data_len);
+}
+
 wsclient_context *mmi_wss_connect(void)
 {
     char *wss_host = c_mmi_get_wss_host();
@@ -173,7 +191,8 @@ wsclient_context *mmi_wss_connect(void)
     snprintf(url, sizeof url, "wss://%s", wss_host);
     wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 1024 * 8, 1);
     if (ws) {
-        ws->ca_cert = g_dashscope_cert;
+        ws_dispatch(mmi_ws_handler);
+        ws->ca_cert = (char*)g_dashscope_cert;
         ws_handshake_header_custom_token(ws, wss_header, strlen(wss_header));
         int ret = ws_connect_url(ws);
         if (ret >= 0) {
@@ -185,12 +204,6 @@ wsclient_context *mmi_wss_connect(void)
         ws_close(&ws);
     }
     return NULL;
-}
-
-static void ws_handler_data(wsclient_context **wsclient, int data_len, enum opcode_type opcode)
-{
-	wsclient_context *ws = *wsclient;
-    c_mmi_analyze_recv_data(opcode, ws->receivedData, data_len);
 }
 
 /// @brief 设备注册
@@ -219,9 +232,6 @@ static int device_register(char *ws_id, char *app_id, char *app_secret, char *de
                         int32_t err = c_license_analyze_register_rsp(data_str);
                         if (err == UTIL_SUCCESS) {
                             ret = c_mmi_storage_save();
-                        }
-                        else {
-                            RTK_LOGE(TAG, "Device registration failed with error code: %d\n", err);
                         }
                         cJSON_free(data_str);
                     }
@@ -260,10 +270,7 @@ static int device_login(char *api_key)
                     if (data_str) {
                         int32_t err = c_license_analyze_get_token_rsp(data_str);
                         if (err == UTIL_SUCCESS) {
-                            RTK_LOGI(TAG, "Get token successful\n");
                             ret = c_mmi_storage_save();
-                        } else {
-                            RTK_LOGE(TAG, "Get token failed with error code: %d\n", err);
                         }
                         cJSON_free(data_str);
                     }
@@ -292,7 +299,6 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
         mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
         mmi_config.evt_cb = mmi_event_callback;
         c_mmi_config(&mmi_config);
-        // c_mmi_set_voice_id("longxiaochun_v2");
 
         c_mmi_storage_set_api_key(api_key);
         
@@ -303,11 +309,44 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
     return UTIL_ERR_FAIL;
 }
 
-void qwen_sdk_test_routine(void *arg)
+static void wss_routine(void *args) {
+    (void) args;
+    for (;;) {
+        rtos_sema_take(s_wss_ready_sem, RTOS_SEMA_MAX_COUNT);
+        wsclient_context *ws = mmi_wss_connect();
+        if (ws) {
+            for (;;) {
+                ws_poll(10000, &ws);
+                if (ws->readyState != WSC_CLOSED) {
+                    uint8_t opcode;
+                    static uint8_t data[1024 * 8];
+                    size_t len = c_mmi_get_send_data(&opcode, data, sizeof data);
+                    if (len > 0) {
+                        if (ws_send_with_opcode((char*)data, len, 1, opcode, 1, ws) != 0) {
+                            break;
+                        }
+                    }
+                }
+                else {
+                    break;
+                }
+            }
+            ws_close(&ws);
+            ws_free(ws);
+        }
+    }
+}
+
+void qwen_sdk_init_routine(void *arg)
 {
     (void) arg;
-    
+
     load_all_env();
+
+    while (LwIP_Check_Connectivity(NETIF_WLAN_STA_INDEX) != CONNECTION_VALID) {
+		rtos_time_delay_ms(1000);
+	}
+
     ntp_init();
 
     while (!util_timestamp_inited()) {
@@ -321,41 +360,7 @@ void qwen_sdk_test_routine(void *arg)
     char *api_key = getenv("API_KEY");
     if (ws_id && app_id && app_secret && device_name && api_key) {
         if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
-            wsclient_context *ws = mmi_wss_connect();
-            if (ws) {
-                ws_dispatch(ws_handler_data);
-                for (;;) {
-                    fd_set read_fds, write_fds, except_fds;
-                    FD_ZERO(&read_fds);
-                    FD_SET(ws->sockfd, &read_fds);
-                    memcpy(&write_fds, &read_fds, sizeof read_fds);
-                    memcpy(&except_fds, &read_fds, sizeof read_fds);
-
-                    struct timeval timeout = {
-                        .tv_sec = 1,
-                    };
-                    int ret = select(ws->sockfd + 1, &read_fds, &write_fds, &except_fds, &timeout);
-                    if (ret > 0) {
-                        if (FD_ISSET(ws->sockfd, &read_fds)) {
-                            ws_poll(100, &ws);
-                        }
-                        if (FD_ISSET(ws->sockfd, &write_fds)) {
-                            uint8_t opcode;
-                            static uint8_t data[1024 * 8];
-                            size_t len = c_mmi_get_send_data(&opcode, data, sizeof data);
-                            if (len > 0) {
-                                if (ws_send_with_opcode((char*)data, len, 1, opcode, 1, ws) != 0) {
-                                    break;
-                                }
-                            }
-                        }
-                        if (FD_ISSET(ws->sockfd, &except_fds)) {
-                            break;
-                        }
-                    }
-                }
-                ws_close(&ws);
-            }
+            RTK_LOGI(TAG, "SDK Init Done\n");
         }
     }
     else {
@@ -363,7 +368,7 @@ void qwen_sdk_test_routine(void *arg)
         RTK_LOGS(TAG, RTK_LOG_ERROR, "Please set WS_ID, APP_ID, APP_SECRET, DEVICE_NAME, and API_KEY env variables\n");
         RTK_LOGS(TAG, RTK_LOG_ERROR, "Start qwen_sdk_test without license initialization\n");
         qwen_sdk_test_init();
-        qwen_sdk_test();
+        // qwen_sdk_test();
         util_storage_erase();
     }
 
@@ -372,7 +377,9 @@ void qwen_sdk_test_routine(void *arg)
 
 void app_example(void)
 {
-    if (rtos_task_create(NULL, "qwen_sdk_test", qwen_sdk_test_routine, NULL, 1024 * 8, 1) != RTK_SUCCESS) {
-		printf("\n\r%s rtos_task_create qwen_sdk_test failed", __FUNCTION__);
+    rtos_sema_create_binary(&s_wss_ready_sem);
+    if (rtos_task_create(NULL, "qwen_sdk_init", qwen_sdk_init_routine, NULL, 1024 * 8, 1) != RTK_SUCCESS) {
+		RTK_LOGE(TAG, "%s rtos_task_create qwen_sdk_init failed\n", __FUNCTION__);
 	}
+    rtos_task_create(NULL, "wss", wss_routine, NULL, 1024 * 4, 1);
 }

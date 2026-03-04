@@ -28,7 +28,7 @@ target_link_libraries(
     -L${CMAKE_CURRENT_LIST_DIR}/third_party/tinycrypt
     qwen_sdk
     c_mmi_cmd
-    qwen_test
+    # qwen_test
     # hal_dummy
     c_mmi_cmd_voice_translate
     -Wl,--whole-archive
