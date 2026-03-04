@@ -300,8 +300,9 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
     if (c_mmi_sdk_init() == UTIL_SUCCESS) {
         mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
         mmi_config.evt_cb = mmi_event_callback;
+        mmi_config.text_mode = C_MMI_TEXT_MODE_NONE;
+        mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
         c_mmi_config(&mmi_config);
-
         c_mmi_storage_set_api_key(api_key);
         
         if (device_register(ws_id, app_id, app_secret, device_name) == UTIL_SUCCESS) {
@@ -325,6 +326,7 @@ static void wss_routine(void *args) {
                     size_t len = c_mmi_get_send_data(&opcode, data, sizeof data);
                     if (len > 0) {
                         if (ws_send_with_opcode((char*)data, len, 1, opcode, 1, ws) != 0) {
+                            RTK_LOGE(TAG, "ws_send_with_opcode failed\n");
                             break;
                         }
                     }
@@ -392,10 +394,24 @@ void at_text_set(u16 argc, char **argv)
         char *text = argv[1];
         if (c_mmi_question(text) == 0) {
             at_printf("\r\nOK\r\n");
+            return;
         }
     }
     else {
         RTK_LOGS(TAG, RTK_LOG_ERROR, "Invalid number of parameters\n");
     }
     at_printf("\r\nERROR\r\n");
+}
+
+void at_pause_speech(u16 argc, char **argv)
+{
+    (void) argc;
+    (void) argv;
+
+    if (c_mmi_speech_pause() == 0) {
+        at_printf("\r\nOK\r\n");
+    }
+    else {
+        at_printf("\r\nERROR\r\n");
+    }
 }

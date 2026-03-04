@@ -10,4 +10,5 @@ const log_item_t at_custom_items[] = {
     {"+ENV?", at_env_query},
     {"+ENV", at_env_set},
     {"+TEXT", at_text_set},
+    {"+SPEECHPAUSE", at_pause_speech},
 };
