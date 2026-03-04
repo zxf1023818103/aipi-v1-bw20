@@ -7,6 +7,7 @@
 extern "C" {
 #endif /* __cplusplus */
 
+void at_pause_speech(u16 argc, char **argv);
 void at_text_set(u16 argc, char **argv);
 
 #ifdef __cplusplus
