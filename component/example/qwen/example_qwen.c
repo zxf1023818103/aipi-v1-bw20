@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <ameba_soc.h>
 #include <os_wrapper.h>
+#include <atcmd_service.h>
 #include <httpc.h>
 #include <wsclient_api.h>
 #include <lwip/sockets.h>
@@ -14,6 +15,7 @@
 #include "config.h"
 #include "ntp.h"
 #include "ali_cert.h"
+#include "example_qwen.h"
 
 #include <envlock.h>
 #include <sys/unistd.h>
@@ -382,4 +384,18 @@ void app_example(void)
 		RTK_LOGE(TAG, "%s rtos_task_create qwen_sdk_init failed\n", __FUNCTION__);
 	}
     rtos_task_create(NULL, "wss", wss_routine, NULL, 1024 * 4, 1);
+}
+
+void at_text_set(u16 argc, char **argv)
+{
+    if (argc == 2) {
+        char *text = argv[1];
+        if (c_mmi_question(text) == 0) {
+            at_printf("\r\nOK\r\n");
+        }
+    }
+    else {
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Invalid number of parameters\n");
+    }
+    at_printf("\r\nERROR\r\n");
 }

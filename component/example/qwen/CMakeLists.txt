@@ -4,6 +4,7 @@ target_sources(
     ${CURRENT_LIB_NAME} PRIVATE
     ali_cert.c
     config.c
+    at_command.c
     hal.c
     ntp.c
     example_qwen.c
