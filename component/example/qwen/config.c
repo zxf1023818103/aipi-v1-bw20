@@ -1,6 +1,5 @@
 #include "config.h"
 
-#include <basic_types.h>
 #include <ameba_soc.h>
 #include <atcmd_service.h>
 #include <os_wrapper.h>
@@ -120,7 +119,7 @@ static int save_linkkeyconfig(char *ws_id, char *app_id, char *app_secret, char 
 }
 
 /// AT+LINKKEYCONFIG=<ws_id>,<app_id>,<app_secret>,<device_name>,<api_key>
-static void at_linkkeyconfig(u16 argc, char **argv)
+void at_linkkeyconfig(u16 argc, char **argv)
 {
 	char *ws_id = argv[1];
     char *app_id = argv[2];
@@ -142,7 +141,7 @@ static void at_linkkeyconfig(u16 argc, char **argv)
     at_printf("\r\nERROR\r\n");
 }
 
-static void at_linkkeyconfig_query(u16 argc, char **argv)
+void at_linkkeyconfig_query(u16 argc, char **argv)
 {
     (void) argc;
     (void) argv;
@@ -160,7 +159,7 @@ static void at_linkkeyconfig_query(u16 argc, char **argv)
     at_printf("\r\nERROR\r\n");
 }
 
-static void at_env_query(u16 argc, char **argv)
+void at_env_query(u16 argc, char **argv)
 {
     (void) argc;
     (void) argv;
@@ -173,7 +172,7 @@ static void at_env_query(u16 argc, char **argv)
     at_printf("\r\nOK\r\n");
 }
 
-static void at_env_set(u16 argc, char **argv)
+void at_env_set(u16 argc, char **argv)
 {
     if (argc == 3) {
         const char *key = argv[1];
@@ -227,11 +226,3 @@ static void at_env_set(u16 argc, char **argv)
     }
     at_printf("\r\nERROR\r\n");
 }
-
-ATCMD_APONLY_TABLE_DATA_SECTION
-const log_item_t at_custom_items[] = {
-	{"+LINKKEYCONFIG", at_linkkeyconfig},
-	{"+LINKKEYCONFIG?", at_linkkeyconfig_query},
-    {"+ENV?", at_env_query},
-    {"+ENV", at_env_set},
-};
