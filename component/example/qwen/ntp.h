@@ -6,6 +6,7 @@ extern "C" {
 #endif /* __cplusplus */
 
 void ntp_init(void);
+void ntp_start(void);
 
 #ifdef __cplusplus
 }

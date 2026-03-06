@@ -60,7 +60,7 @@ void qwen_sdk_test_init(void)
         if (f) {
             fclose(f);
         } else {
-            RTK_LOGE(TAG, "Reset %s for test\n", path);
+            RTK_LOGI(TAG, "Reset %s for test\n", path);
             static uint8_t data[512];
             memset(data, 0xff, 256);
             memset(data + 256, 0xa5, 256);

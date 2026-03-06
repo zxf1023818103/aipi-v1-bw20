@@ -16,6 +16,7 @@
 #include "config.h"
 #include "ntp.h"
 #include "ali_cert.h"
+#include "vb6824.h"
 #include "example_qwen.h"
 
 #include <envlock.h>
@@ -193,7 +194,7 @@ wsclient_context *mmi_wss_connect(void)
 
     char url[32];
     snprintf(url, sizeof url, "wss://%s", wss_host);
-    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 1024 * 8, 1);
+    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 1024 * 48, 1);
     if (ws) {
         ws_dispatch(mmi_ws_handler);
         ws->ca_cert = (char*)g_dashscope_cert;
@@ -302,6 +303,12 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
     if (c_mmi_sdk_init() == UTIL_SUCCESS) {
         mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
         mmi_config.evt_cb = mmi_event_callback;
+        mmi_config.player_rb_size = 32 * 1024;
+        mmi_config.downstream_mode = C_MMI_STREAM_MODE_PCM;
+        mmi_config.ds_sample_rate = 16000;
+        mmi_config.upstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
+        mmi_config.us_sample_rate = 16000;
+        mmi_config.frame_size = 20;
         mmi_config.text_mode = C_MMI_TEXT_MODE_LLM_ONLY;
         mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
         c_mmi_config(&mmi_config);
@@ -318,13 +325,15 @@ void qwen_sdk_init_routine(void *arg)
 {
     (void) arg;
 
+    vb6824_init();
     load_all_env();
+    ntp_init();
 
     while (LwIP_Check_Connectivity(NETIF_WLAN_STA_INDEX) != CONNECTION_VALID) {
 		rtos_time_delay_ms(1000);
 	}
 
-    ntp_init();
+    ntp_start();
 
     while (!util_timestamp_inited()) {
         util_msleep(1000);
@@ -344,7 +353,7 @@ void qwen_sdk_init_routine(void *arg)
                 if (ws) {
                     for (;;) {
                         ws_poll(10000, &ws);
-                        static uint8_t audio_data[8 * 1024];
+                        static uint8_t audio_data[32 * 1024];
                         uint32_t nbytes_read = c_mmi_get_player_data(audio_data, sizeof audio_data);
                         (void) nbytes_read;
                         // if (nbytes_read != 0) {
@@ -352,7 +361,7 @@ void qwen_sdk_init_routine(void *arg)
                         // }
                         if (ws->readyState != WSC_CLOSED) {
                             uint8_t opcode;
-                            static uint8_t data[1024 * 8];
+                            static uint8_t data[8 * 1024];
                             size_t len = c_mmi_get_send_data(&opcode, data, sizeof data);
                             if (len > 0) {
                                 if (ws_send_with_opcode((char*)data, len, 1, opcode, 1, ws) != 0) {
@@ -376,7 +385,7 @@ void qwen_sdk_init_routine(void *arg)
         RTK_LOGS(TAG, RTK_LOG_ERROR, "Please set WS_ID, APP_ID, APP_SECRET, DEVICE_NAME, and API_KEY env variables\n");
         RTK_LOGS(TAG, RTK_LOG_ERROR, "Start qwen_sdk_test without license initialization\n");
         qwen_sdk_test_init();
-        // qwen_sdk_test();
+        qwen_sdk_test();
         util_storage_erase();
     }
 

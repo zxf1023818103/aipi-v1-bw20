@@ -80,5 +80,9 @@ void ntp_init(void)
 {
     load_timezone();
     load_ntp_server();
+}
+
+void ntp_start(void)
+{
     sntp_init();
 }
