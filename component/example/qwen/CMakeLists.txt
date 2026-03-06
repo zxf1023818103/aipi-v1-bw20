@@ -8,10 +8,16 @@ target_sources(
     hal.c
     ntp.c
     example_qwen.c
+    vb6824.c
 )
 
 target_include_directories(
     ${CURRENT_LIB_NAME} PRIVATE
+    ${c_FREERTOS_DIR}/include
+    ${c_FREERTOS_DIR}/portable/GCC/ARM_CA7
+    ${c_COMPONENT_DIR}/os/freertos/freertos_posix/include
+    ${c_COMPONENT_DIR}/os/freertos/freertos_posix/FreeRTOS-Plus-POSIX/include
+    ${c_COMPONENT_DIR}/os/freertos/freertos_posix/FreeRTOS-Plus-POSIX/include/portable/realtek
     ${BASEDIR}/component/network/cJSON
     ${BASEDIR}/component/network/sntp
     ${BASEDIR}/component/network/httpc
@@ -29,7 +35,7 @@ target_link_libraries(
     -L${CMAKE_CURRENT_LIST_DIR}/third_party/tinycrypt
     qwen_sdk
     c_mmi_cmd
-    # qwen_test
+    qwen_test
     # hal_dummy
     c_mmi_cmd_voice_translate
     -Wl,--whole-archive
