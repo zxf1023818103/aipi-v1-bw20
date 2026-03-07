@@ -15,6 +15,53 @@ extern "C" {
 #define VB6824_UART_PARITY ParityNone
 #define VB6824_UART_STOPBITS 1
 
+/// 方向：VB6824 -> 上位机
+/// 作用：传输麦克风数据
+/// 编码格式：OPUS RAW
+/// 帧长：20ms
+/// 采样率：16000
+/// 单声道
+#define VB6824_CMD_REPORT_RECORD 0x2080
+
+/// 方向：VB6824 -> 上位机
+/// 作用：发送识别结构的数据格式
+#define VB6824_CMD_REPORT_ASR 0x0180
+
+/// 方向：上位机 -> VB6824
+/// 作用：播放音频数据
+/// 编码格式：PCM
+/// 采样率：16000
+/// 单声道
+#define VB6824_CMD_PLAY 0x2081
+
+/// 方向：上位机 -> VB6824
+/// 作用：停止录音
+#define VB6824_CMD_STOP_RECORD 0x0201
+
+/// 方向：上位机 -> VB6824
+/// 作用：设置音量
+#define VB6824_CMD_SET_VOL 0x0203
+
+/// 方向：上位机 -> VB6824
+/// 作用：进入 OTA 模式
+#define VB6824_CMD_REQUEST_UPGRADE 0x0205
+
+/// 方向：上位机 -> VB6824
+/// 作用：获取固件信息
+#define VB6824_CMD_REQUEST_VERSION 0x0207
+
+/// 方向：VB6824 -> 上位机
+/// 作用：固件信息回复
+#define VB6824_CMD_REPORT_VERSION 0x0107
+
+/// 方向：上位机 -> VB6824
+/// 作用：进入产测模式
+#define VB6824_CMD_REQUEST_MP 0x0208
+
+/// 方向：VB6824 -> 上位机
+/// 作用：产测能量测试回复
+#define VB6824_CMD_REPORT_MP 0x2088
+
 void vb6824_init(void);
 
 #ifdef __cplusplus
