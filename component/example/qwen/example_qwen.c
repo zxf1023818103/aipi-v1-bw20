@@ -339,6 +339,10 @@ void qwen_sdk_init_routine(void *arg)
         util_msleep(1000);
     }
 
+    vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
+    vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
+    vb6824_set_volume(VB6824_MAX_VOLUME);
+
     char *ws_id = getenv("WS_ID");
     char *app_id = getenv("APP_ID");
     char *app_secret = getenv("APP_SECRET");
@@ -351,14 +355,14 @@ void qwen_sdk_init_routine(void *arg)
                 rtos_sema_take(s_wss_ready_sem, RTOS_SEMA_MAX_COUNT);
                 wsclient_context *ws = mmi_wss_connect();
                 if (ws) {
+                    uint16_t audio_id = 0;
                     for (;;) {
                         ws_poll(10000, &ws);
-                        static uint8_t audio_data[32 * 1024];
+                        static uint8_t audio_data[320];
                         uint32_t nbytes_read = c_mmi_get_player_data(audio_data, sizeof audio_data);
-                        (void) nbytes_read;
-                        // if (nbytes_read != 0) {
-                        //     RTK_LOGI(TAG, "c_mmi_get_player_data %u bytes\n", nbytes_read);
-                        // }
+                        if (nbytes_read != 0) {
+                            vb6824_play_audio(audio_id++, audio_data, nbytes_read);
+                        }
                         if (ws->readyState != WSC_CLOSED) {
                             uint8_t opcode;
                             static uint8_t data[8 * 1024];

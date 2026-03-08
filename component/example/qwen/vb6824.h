@@ -15,6 +15,9 @@ extern "C" {
 #define VB6824_UART_PARITY ParityNone
 #define VB6824_UART_STOPBITS 1
 
+#define VB6824_MAX_VOLUME 31
+#define VB6824_MIN_VOLUME 5
+
 /// 方向：VB6824 -> 上位机
 /// 作用：传输麦克风数据
 /// 编码格式：OPUS RAW
@@ -63,6 +66,9 @@ extern "C" {
 #define VB6824_CMD_REPORT_MP 0x2088
 
 void vb6824_init(void);
+void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len);
+void vb6824_play_audio(uint16_t id, const uint8_t *data, uint16_t data_len);
+void vb6824_set_volume(uint8_t volume);
 
 #ifdef __cplusplus
 }

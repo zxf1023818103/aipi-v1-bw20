@@ -5,6 +5,7 @@
 
 #include "vb6824.h"
 
+#include <serial_ex_api.h>
 #include <FreeRTOS.h>
 #include <message_buffer.h>
 #include <queue.h>
@@ -13,12 +14,14 @@
 
 typedef struct vb6824_frame {
     uint16_t cmd;
-    uint8_t data[510];
+    uint8_t data[500];
 } vb6824_frame_t;
 
 static serial_t vb6824_serial = { .uart_idx = VB6824_UART_IDX };
 
 static MessageBufferHandle_t vb6824_recv_frame_mb;
+
+static StreamBufferHandle_t vb6824_send_sb;
 
 static int vb6824_uart_finite_state_machine(int prev_status, uint8_t input, uint16_t *cmd, uint8_t *data, uint16_t *data_len, uint16_t max_data_len, uint8_t *current_checksum, int *success)
 {
@@ -99,6 +102,15 @@ static void vb6824_uart_irq_handler(uint32_t id, SerialIrq event)
             }
 		}
     }
+    else if (event == TxIrq) {
+        uint8_t output;
+        if (xStreamBufferReceiveFromISR(vb6824_send_sb, &output, 1, NULL) == pdTRUE) {
+            serial_putc(&vb6824_serial, output);
+        }
+        else {
+            serial_irq_set(&vb6824_serial, TxIrq, 0);
+        }
+    }
 }
 
 static void vb6824_on_frame_recv(uint16_t cmd, size_t data_len, uint8_t *data)
@@ -145,13 +157,51 @@ static void vb6824_recv_routine(void *args)
 
 void vb6824_init(void)
 {
-    vb6824_recv_frame_mb = xMessageBufferCreate(1024);
+    vb6824_recv_frame_mb = xMessageBufferCreate(512);
+    vb6824_send_sb = xStreamBufferCreate(512, 1);
     xTaskCreate(vb6824_recv_routine, "vb6824_recv", 1024, NULL, 1, NULL);
-
+    
     serial_init(&vb6824_serial, VB6824_UART_TX, VB6824_UART_RX);
     serial_baud(&vb6824_serial, VB6824_UART_BAUDRATE);
     serial_format(&vb6824_serial, VB6824_UART_DATABITS, VB6824_UART_PARITY, VB6824_UART_STOPBITS);
 
     serial_irq_handler(&vb6824_serial, vb6824_uart_irq_handler, NULL);
     serial_irq_set(&vb6824_serial, RxIrq, 1);
+}
+
+void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len)
+{
+    uint8_t frame_header[6] = { 0x55, 0xaa, (uint8_t)(data_len >> 8), (uint8_t)data_len, (uint8_t)(cmd >> 8), (uint8_t)cmd };
+    uint8_t checksum = frame_header[0] + frame_header[1] + frame_header[2] + frame_header[3] + frame_header[4] + frame_header[5];
+    for (uint16_t i = 0; i < data_len; i++) {
+        checksum += data[i];
+    }
+    xStreamBufferSend(vb6824_send_sb, frame_header, sizeof frame_header, portMAX_DELAY);
+    if (data_len) {
+        xStreamBufferSend(vb6824_send_sb, data, data_len, portMAX_DELAY);
+    }
+    xStreamBufferSend(vb6824_send_sb, &checksum, 1, portMAX_DELAY);
+    serial_irq_set(&vb6824_serial, TxIrq, 1);
+}
+
+void vb6824_play_audio(uint16_t id, const uint8_t *data, uint16_t data_len)
+{
+    const uint16_t cmd = VB6824_CMD_PLAY;
+    data_len += 2;
+    uint8_t frame_header[8] = { 0x55, 0xaa, (uint8_t)(data_len >> 8), (uint8_t)data_len, (uint8_t)(cmd >> 8), (uint8_t)cmd, (uint8_t)(id >> 8), (uint8_t)id };
+    uint8_t checksum = frame_header[0] + frame_header[1] + frame_header[2] + frame_header[3] + frame_header[4] + frame_header[5] + frame_header[6] + frame_header[7];
+    for (uint16_t i = 0; i < data_len - 2; i++) {
+        checksum += data[i];
+    }
+    xStreamBufferSend(vb6824_send_sb, frame_header, sizeof frame_header, portMAX_DELAY);
+    if (data_len) {
+        xStreamBufferSend(vb6824_send_sb, data, data_len, portMAX_DELAY);
+    }
+    xStreamBufferSend(vb6824_send_sb, &checksum, 1, portMAX_DELAY);
+    serial_irq_set(&vb6824_serial, TxIrq, 1);
+}
+
+void vb6824_set_volume(uint8_t volume)
+{
+    vb6824_send(VB6824_CMD_SET_VOL, &volume, 1);
 }
