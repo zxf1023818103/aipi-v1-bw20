@@ -18,18 +18,11 @@ typedef struct vb6824_frame {
     uint8_t data[500];
 } vb6824_frame_t;
 
-typedef struct vb6824_send_frame {
-    uint32_t data_len;
-    uint8_t *data;
-} vb6824_send_frame_t;
-
 static serial_t vb6824_serial = { .uart_idx = VB6824_UART_IDX };
 
 static MessageBufferHandle_t vb6824_recv_frame_mb;
 
 static SemaphoreHandle_t vb6824_dma_tx_done_sem;
-
-static QueueHandle_t vb6824_send_frame_q;
 
 static int vb6824_uart_finite_state_machine(int prev_status, uint8_t input, uint16_t *cmd, uint8_t *data, uint16_t *data_len, uint16_t max_data_len, uint8_t *current_checksum, int *success)
 {
@@ -160,26 +153,11 @@ static void vb6824_on_send_comp(uint32_t id)
     xSemaphoreGiveFromISR(vb6824_dma_tx_done_sem, NULL);
 }
 
-static void vb6824_send_routine(void *args)
-{
-    (void) args;
-
-    for(;;) {
-        vb6824_send_frame_t send_frame;
-        xQueueReceive(vb6824_send_frame_q, &send_frame, portMAX_DELAY);
-        serial_send_stream_dma(&vb6824_serial, (char*)send_frame.data, send_frame.data_len);
-        xSemaphoreTake(vb6824_dma_tx_done_sem, portMAX_DELAY);
-        vPortFree(send_frame.data);
-    }
-}
-
 void vb6824_init(void)
 {
     vb6824_recv_frame_mb = xMessageBufferCreate(512);
     vb6824_dma_tx_done_sem = xSemaphoreCreateBinary();
-    vb6824_send_frame_q = xQueueCreate(2, sizeof(vb6824_send_frame_t));
     xTaskCreate(vb6824_recv_routine, "vb6824_recv", 1024, NULL, 1, NULL);
-    xTaskCreate(vb6824_send_routine, "vb6824_send", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     
     serial_init(&vb6824_serial, VB6824_UART_TX, VB6824_UART_RX);
     serial_baud(&vb6824_serial, VB6824_UART_BAUDRATE);
@@ -191,24 +169,23 @@ void vb6824_init(void)
 
 void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len)
 {
-    uint8_t frame_header[6] = { 0x55, 0xaa, (uint8_t)(data_len >> 8), (uint8_t)data_len, (uint8_t)(cmd >> 8), (uint8_t)cmd };
-    uint8_t checksum = frame_header[0] + frame_header[1] + frame_header[2] + frame_header[3] + frame_header[4] + frame_header[5];
-    for (uint16_t i = 0; i < data_len; i++) {
-        checksum += data[i];
-    }
+    static uint8_t packet[384] __attribute__((aligned(CACHE_LINE_SIZE)));
 
-    size_t packet_len = data_len + sizeof frame_header + 1;
-    uint8_t *packet = pvPortMalloc(packet_len);
-    if (packet) {
+    if (data_len <= sizeof packet - 7) {
+        uint8_t frame_header[6] = { 0x55, 0xaa, (uint8_t)(data_len >> 8), (uint8_t)data_len, (uint8_t)(cmd >> 8), (uint8_t)cmd };
+        uint8_t checksum = frame_header[0] + frame_header[1] + frame_header[2] + frame_header[3] + frame_header[4] + frame_header[5];
+        for (uint16_t i = 0; i < data_len; i++) {
+            checksum += data[i];
+        }
+
+        size_t packet_len = data_len + sizeof frame_header + 1;
         memcpy(packet, frame_header, sizeof frame_header);
         memcpy(packet + sizeof frame_header, data, data_len);
         packet[sizeof frame_header + data_len] = checksum;
         DCache_Clean((uint32_t)packet, packet_len);
-        vb6824_send_frame_t send_frame = {
-            .data = packet,
-            .data_len = packet_len,
-        };
-        xQueueSend(vb6824_send_frame_q, &send_frame, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(8));
+        serial_send_stream_dma(&vb6824_serial, (char*)packet, packet_len);
+        xSemaphoreTake(vb6824_dma_tx_done_sem, portMAX_DELAY);
     }
 }
 

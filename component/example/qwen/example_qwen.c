@@ -196,7 +196,7 @@ wsclient_context *mmi_wss_connect(void)
 
     char url[32];
     snprintf(url, sizeof url, "wss://%s", wss_host);
-    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 32 * 1024, 1);
+    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 8 * 1024, 32 * 1024, 3);
     if (ws) {
         ws_dispatch(mmi_ws_handler);
         ws->ca_cert = (char*)g_dashscope_cert;
