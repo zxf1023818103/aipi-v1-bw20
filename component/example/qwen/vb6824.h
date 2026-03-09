@@ -67,7 +67,6 @@ extern "C" {
 
 void vb6824_init(void);
 void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len);
-void vb6824_play_audio(uint16_t id, const uint8_t *data, uint16_t data_len);
 void vb6824_set_volume(uint8_t volume);
 
 #ifdef __cplusplus

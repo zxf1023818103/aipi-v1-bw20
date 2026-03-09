@@ -7,7 +7,10 @@
 #include <stdlib.h>
 #include <vfs.h>
 #include <ameba_soc.h>
-#include <os_wrapper.h>
+
+#include <FreeRTOS.h>
+#include <task.h>
+#include <semphr.h>
 
 #include "config.h"
 
@@ -20,13 +23,13 @@ void* util_malloc(int32_t size)
     if (size <= 0) {
         return NULL;
     }
-    return malloc(size);
+    return pvPortMalloc(size);
 }
 
 void util_free(void *ptr)
 {
     if (ptr != NULL) {
-        free(ptr);
+        vPortFree(ptr);
     }
 }
 
@@ -35,7 +38,7 @@ void* util_realloc(void *ptr, int32_t size)
     if (size <= 0) {
         return NULL;
     }
-    return realloc(ptr, size);
+    return pvPortReAlloc(ptr, size);
 }
 
 int32_t util_random_init(uint32_t seed)
@@ -163,31 +166,17 @@ int64_t util_now_ms(void)
 
 void util_msleep(uint32_t ms)
 {
-    rtos_time_delay_ms(ms);
+    vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
 util_mutex_t* util_mutex_create(void)
 {
-    util_mutex_t *mutex = (util_mutex_t *)util_malloc(sizeof(util_mutex_t));
-    if (mutex == NULL) {
-        return NULL;
-    }
-
-    if (rtos_mutex_create(&mutex->mutex_handle) == RTK_FAIL) {
-        util_free(mutex);
-        return NULL;
-    }
-
-    return mutex;
+    return (util_mutex_t*)xSemaphoreCreateBinary();
 }
 
 void util_mutex_delete(util_mutex_t *mutex)
 {
-    if (mutex == NULL) {
-        return;
-    }
-    rtos_mutex_delete(mutex->mutex_handle);
-    util_free(mutex);
+    vSemaphoreDelete(mutex);
 }
 
 int32_t util_mutex_lock(util_mutex_t *mutex, int32_t timeout)
@@ -195,25 +184,24 @@ int32_t util_mutex_lock(util_mutex_t *mutex, int32_t timeout)
     if (mutex == NULL) {
         return UTIL_ERR_FAIL;
     }
-    uint32_t wait_ms;
+
+    TickType_t tick;
     if (timeout == MUTEX_WAIT_FOREVER) {
-        wait_ms = MUTEX_WAIT_FOREVER;
+        tick = portMAX_DELAY;
     }
-    else if (timeout < 0) {
-        return UTIL_ERR_FAIL;
+    else if (timeout >= 0) {
+        uint32_t t = (uint32_t)timeout;
+        tick = pdMS_TO_TICKS(t);
     }
     else {
-        wait_ms = (uint32_t)timeout;
+        return UTIL_ERR_FAIL;
     }
-    return rtos_mutex_take(mutex->mutex_handle, wait_ms) == RTK_SUCCESS ? UTIL_SUCCESS : UTIL_ERR_FAIL;
+    return xSemaphoreTake((SemaphoreHandle_t)mutex, tick) == pdTRUE ? UTIL_SUCCESS : UTIL_ERR_FAIL;
 }
 
 int32_t util_mutex_unlock(util_mutex_t *mutex)
 {
-    if (mutex == NULL) {
-        return UTIL_ERR_FAIL;
-    }
-    return rtos_mutex_give(mutex->mutex_handle) == RTK_SUCCESS ? UTIL_SUCCESS : UTIL_ERR_FAIL;
+    return xSemaphoreGive((SemaphoreHandle_t)mutex) == pdTRUE ? UTIL_SUCCESS : UTIL_ERR_FAIL;
 }
 
 int util_printf(const char* format, ...)

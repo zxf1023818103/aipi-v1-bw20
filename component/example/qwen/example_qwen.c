@@ -194,7 +194,7 @@ wsclient_context *mmi_wss_connect(void)
 
     char url[32];
     snprintf(url, sizeof url, "wss://%s", wss_host);
-    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 1024 * 48, 1);
+    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 1024 * 8, 32 * 1024, 1);
     if (ws) {
         ws_dispatch(mmi_ws_handler);
         ws->ca_cert = (char*)g_dashscope_cert;
@@ -339,9 +339,9 @@ void qwen_sdk_init_routine(void *arg)
         util_msleep(1000);
     }
 
+    vb6824_set_volume(0x1b);
     vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
     vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
-    vb6824_set_volume(VB6824_MAX_VOLUME);
 
     char *ws_id = getenv("WS_ID");
     char *app_id = getenv("APP_ID");
@@ -355,14 +355,8 @@ void qwen_sdk_init_routine(void *arg)
                 rtos_sema_take(s_wss_ready_sem, RTOS_SEMA_MAX_COUNT);
                 wsclient_context *ws = mmi_wss_connect();
                 if (ws) {
-                    uint16_t audio_id = 0;
                     for (;;) {
                         ws_poll(10000, &ws);
-                        static uint8_t audio_data[320];
-                        uint32_t nbytes_read = c_mmi_get_player_data(audio_data, sizeof audio_data);
-                        if (nbytes_read != 0) {
-                            vb6824_play_audio(audio_id++, audio_data, nbytes_read);
-                        }
                         if (ws->readyState != WSC_CLOSED) {
                             uint8_t opcode;
                             static uint8_t data[8 * 1024];
