@@ -1,7 +1,9 @@
 #include <stdlib.h>
+#include <FreeRTOS.h>
+#include <task.h>
+#include <semphr.h>
+
 #include <ameba_soc.h>
-#include <os_wrapper.h>
-#include <os_wrapper_time.h>
 #include <atcmd_service.h>
 #include <httpc.h>
 #include <wsclient_api.h>
@@ -26,7 +28,7 @@
 
 #define MMI_END_POINT "bailian.multimodalagent.aliyuncs.com"
 
-static rtos_sema_t s_wss_ready_sem;
+static SemaphoreHandle_t s_wss_ready_sem, s_player_sem;
 
 static int32_t mmi_event_callback(uint32_t event, void *param)
 {
@@ -42,7 +44,7 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
         }
         case C_MMI_EVENT_DATA_INIT: {
             RTK_LOGI(TAG, "C_MMI_EVENT_DATA_INIT\n");
-            rtos_sema_give(s_wss_ready_sem);
+            xSemaphoreGive(s_wss_ready_sem);
             break;
         }
         case C_MMI_EVENT_DATA_DEINIT: {
@@ -81,11 +83,11 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
             break;
         case C_MMI_EVENT_TTS_START: {
             RTK_LOGI(TAG, "C_MMI_EVENT_TTS_START\n");
+            xSemaphoreGive(s_player_sem);
             break;
         }
         case C_MMI_EVENT_TTS_END: {
             RTK_LOGI(TAG, "C_MMI_EVENT_TTS_END\n");
-            c_mmi_speech_start();
             break;
         }
         default: {
@@ -330,13 +332,13 @@ void qwen_sdk_init_routine(void *arg)
     ntp_init();
 
     while (LwIP_Check_Connectivity(NETIF_WLAN_STA_INDEX) != CONNECTION_VALID) {
-		rtos_time_delay_ms(1000);
+		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
 
     ntp_start();
 
     while (!util_timestamp_inited()) {
-        util_msleep(1000);
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     vb6824_set_volume(0x1b);
@@ -352,7 +354,7 @@ void qwen_sdk_init_routine(void *arg)
         if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
             RTK_LOGI(TAG, "SDK Init Done\n");
             for (;;) {
-                rtos_sema_take(s_wss_ready_sem, RTOS_SEMA_MAX_COUNT);
+                xSemaphoreTake(s_wss_ready_sem, portMAX_DELAY);
                 wsclient_context *ws = mmi_wss_connect();
                 if (ws) {
                     for (;;) {
@@ -387,15 +389,34 @@ void qwen_sdk_init_routine(void *arg)
         util_storage_erase();
     }
 
-    rtos_task_delete(NULL);
+    vTaskDelete(NULL);
+}
+
+static void player_routine(void *args)
+{
+    (void) args;
+    for (;;) {
+        xSemaphoreTake(s_player_sem, portMAX_DELAY);
+        static uint8_t data[320];
+        size_t remainder = sizeof data;
+        while (!c_mmi_audio_recv_all() && remainder) {
+            size_t len = c_mmi_get_player_data(data + sizeof data - remainder, remainder);
+            remainder -= len;
+            if (remainder == 0) {
+                vb6824_send(VB6824_CMD_PLAY, data, sizeof data);
+                remainder = sizeof data;
+            }
+        }
+        RTK_LOGI(TAG, "Received all audio data\n");
+    }
 }
 
 void app_example(void)
 {
-    rtos_sema_create_binary(&s_wss_ready_sem);
-    if (rtos_task_create(NULL, "qwen_sdk_init", qwen_sdk_init_routine, NULL, 1024 * 8, 1) != RTK_SUCCESS) {
-		RTK_LOGE(TAG, "%s rtos_task_create qwen_sdk_init failed\n", __FUNCTION__);
-	}
+    s_wss_ready_sem = xSemaphoreCreateBinary();
+    s_player_sem = xSemaphoreCreateBinary();
+    xTaskCreate(qwen_sdk_init_routine, "qwen_sdk_init", 1024 * 8, NULL, tskIDLE_PRIORITY + 1, NULL);
+    xTaskCreate(player_routine, "player", 1024, NULL, tskIDLE_PRIORITY + 1, NULL);
 }
 
 void at_chat_set(u16 argc, char **argv)

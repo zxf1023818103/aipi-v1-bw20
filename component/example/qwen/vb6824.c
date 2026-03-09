@@ -27,9 +27,9 @@ static serial_t vb6824_serial = { .uart_idx = VB6824_UART_IDX };
 
 static MessageBufferHandle_t vb6824_recv_frame_mb;
 
-static SemaphoreHandle_t vb6824_dma_tx_done_sema;
+static SemaphoreHandle_t vb6824_dma_tx_done_sem;
 
-static QueueHandle_t vb6824_send_frame_q, vb6824_gc_q;
+static QueueHandle_t vb6824_send_frame_q;
 
 static int vb6824_uart_finite_state_machine(int prev_status, uint8_t input, uint16_t *cmd, uint8_t *data, uint16_t *data_len, uint16_t max_data_len, uint8_t *current_checksum, int *success)
 {
@@ -156,17 +156,8 @@ static void vb6824_recv_routine(void *args)
 
 static void vb6824_on_send_comp(uint32_t id)
 {
-    if (id) {
-        xQueueSendFromISR(vb6824_gc_q, &id, NULL);
-        vb6824_send_frame_t send_frame;
-        if (xQueueReceiveFromISR(vb6824_send_frame_q, &send_frame, NULL) == pdTRUE) {
-            serial_send_comp_handler(&vb6824_serial, vb6824_on_send_comp, (uint32_t)send_frame.data);
-            serial_send_stream_dma(&vb6824_serial, (char*)send_frame.data, send_frame.data_len);
-        }
-        else {
-            xSemaphoreGiveFromISR(vb6824_dma_tx_done_sema, NULL);
-        }
-    }
+    (void) id;
+    xSemaphoreGiveFromISR(vb6824_dma_tx_done_sem, NULL);
 }
 
 static void vb6824_send_routine(void *args)
@@ -176,37 +167,24 @@ static void vb6824_send_routine(void *args)
     for(;;) {
         vb6824_send_frame_t send_frame;
         xQueueReceive(vb6824_send_frame_q, &send_frame, portMAX_DELAY);
-        xSemaphoreTake(vb6824_dma_tx_done_sema, portMAX_DELAY);
-        serial_send_comp_handler(&vb6824_serial, vb6824_on_send_comp, (uint32_t)send_frame.data);
         serial_send_stream_dma(&vb6824_serial, (char*)send_frame.data, send_frame.data_len);
-    }
-}
-
-static void vb6824_gc_routine(void *args)
-{
-    (void) args;
-    for(;;) {
-        void *p;
-        xQueueReceive(vb6824_gc_q, &p, portMAX_DELAY);
-        vPortFree(p);
+        xSemaphoreTake(vb6824_dma_tx_done_sem, portMAX_DELAY);
+        vPortFree(send_frame.data);
     }
 }
 
 void vb6824_init(void)
 {
     vb6824_recv_frame_mb = xMessageBufferCreate(512);
-    vb6824_dma_tx_done_sema = xSemaphoreCreateBinary();
-    xSemaphoreGive(vb6824_dma_tx_done_sema);
+    vb6824_dma_tx_done_sem = xSemaphoreCreateBinary();
     vb6824_send_frame_q = xQueueCreate(2, sizeof(vb6824_send_frame_t));
-    vb6824_gc_q = xQueueCreate(5, sizeof(void*));
     xTaskCreate(vb6824_recv_routine, "vb6824_recv", 1024, NULL, 1, NULL);
     xTaskCreate(vb6824_send_routine, "vb6824_send", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
-    xTaskCreate(vb6824_gc_routine, "vb6824_gc", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     
     serial_init(&vb6824_serial, VB6824_UART_TX, VB6824_UART_RX);
     serial_baud(&vb6824_serial, VB6824_UART_BAUDRATE);
     serial_format(&vb6824_serial, VB6824_UART_DATABITS, VB6824_UART_PARITY, VB6824_UART_STOPBITS);
-
+    serial_send_comp_handler(&vb6824_serial, vb6824_on_send_comp, 0);
     serial_irq_handler(&vb6824_serial, vb6824_uart_irq_handler, NULL);
     serial_irq_set(&vb6824_serial, RxIrq, 1);
 }

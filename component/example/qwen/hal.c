@@ -171,7 +171,7 @@ void util_msleep(uint32_t ms)
 
 util_mutex_t* util_mutex_create(void)
 {
-    return (util_mutex_t*)xSemaphoreCreateBinary();
+    return (util_mutex_t*)xSemaphoreCreateMutex();
 }
 
 void util_mutex_delete(util_mutex_t *mutex)
