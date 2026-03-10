@@ -8,6 +8,14 @@
 extern "C" {
 #endif /* __cplusplus */
 
+extern const uint8_t g_connected_pcm[];
+
+extern const size_t g_connected_pcm_len;
+
+extern const uint8_t g_disconnected_pcm[];
+
+extern const size_t g_disconnected_pcm_len;
+
 extern const uint8_t g_start_recording_pcm[];
 
 extern const size_t g_start_recording_pcm_len;
