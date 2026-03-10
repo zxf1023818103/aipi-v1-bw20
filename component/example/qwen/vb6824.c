@@ -105,16 +105,30 @@ static void vb6824_uart_irq_handler(uint32_t id, SerialIrq event)
     }
 }
 
+__weak void vb6824_on_report_record(uint8_t *data, size_t data_len)
+{
+    (void) data;
+    (void) data_len;
+}
+
+__weak void vb6824_on_report_asr(uint8_t *data, size_t data_len)
+{
+    (void) data;
+    (void) data_len;
+}
+
 static void vb6824_on_frame_recv(uint16_t cmd, size_t data_len, uint8_t *data)
 {
     (void) data;
     switch (cmd) {
         case VB6824_CMD_REPORT_ASR: {
             RTK_LOGI(TAG, "ASR data=%s\n", data);
+            vb6824_on_report_asr(data, data_len);
             break;
         }
         case VB6824_CMD_REPORT_RECORD: {
-            // RTK_LOGI(TAG, "VB6824_CMD_REPORT_RECORD data_len=%u\n", data_len);
+            // RTK_LOGI(TAG, "RECORD data_len=%u\n", data_len);
+            vb6824_on_report_record(data, data_len);
             break;
         }
         case VB6824_CMD_REPORT_VERSION: {

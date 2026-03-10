@@ -2,8 +2,12 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include <semphr.h>
+#include <envlock.h>
+#include <sys/unistd.h>
 
 #include <ameba_soc.h>
+#include <sys_api.h>
+#include <wdt_api.h>
 #include <atcmd_service.h>
 #include <httpc.h>
 #include <wsclient_api.h>
@@ -20,9 +24,6 @@
 #include "ali_cert.h"
 #include "vb6824.h"
 #include "example_qwen.h"
-
-#include <envlock.h>
-#include <sys/unistd.h>
 
 #define TAG "QWEN"
 
@@ -71,7 +72,7 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
         }
         case C_MMI_EVENT_ASR_END: {
             RTK_LOGI(TAG, "C_MMI_EVENT_ASR_END\n");
-            // dummy_recorder_stop();
+            vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
             break;
         }
         case C_MMI_EVENT_LLM_INCOMPLETE: {
@@ -311,8 +312,8 @@ int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *dev
         mmi_config.upstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
         mmi_config.us_sample_rate = 16000;
         mmi_config.frame_size = 20;
-        mmi_config.text_mode = C_MMI_TEXT_MODE_LLM_ONLY;
-        mmi_config.work_mode = C_MMI_MODE_PUSH2TALK;
+        mmi_config.text_mode = C_MMI_TEXT_MODE_BOTH;
+        mmi_config.work_mode = C_MMI_MODE_TAP2TALK;
         c_mmi_config(&mmi_config);
         c_mmi_storage_set_api_key(api_key);
         
@@ -351,6 +352,8 @@ void qwen_sdk_init_routine(void *arg)
     char *device_name = getenv("DEVICE_NAME");
     char *api_key = getenv("API_KEY");
     if (ws_id && app_id && app_secret && device_name && api_key) {
+        watchdog_init(4000);
+        watchdog_start();
         if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
             RTK_LOGI(TAG, "SDK Init Done\n");
             for (;;) {
@@ -358,6 +361,7 @@ void qwen_sdk_init_routine(void *arg)
                 wsclient_context *ws = mmi_wss_connect();
                 if (ws) {
                     for (;;) {
+                        watchdog_refresh();
                         ws_poll(10000, &ws);
                         if (ws->readyState != WSC_CLOSED) {
                             uint8_t opcode;
@@ -408,6 +412,29 @@ static void player_routine(void *args)
             }
         }
         RTK_LOGI(TAG, "Received all audio data\n");
+    }
+}
+
+void vb6824_on_report_asr(uint8_t *data, size_t data_len)
+{
+    if (strncmp((char*)data, "你好小安", data_len) == 0) {
+        c_mmi_speech_start();
+    }
+    else if (strncmp((char*)data, "再见", data_len) == 0 || strncmp((char*)data, "不聊了", data_len) == 0) {
+        c_mmi_speech_end();
+    }
+    else if (strncmp((char*)data, "开始配网", data_len) == 0) {
+
+    }
+    else if (strncmp((char*)data, "停止配网", data_len) == 0) {
+
+    }
+}
+
+void vb6824_on_report_record(uint8_t *data, size_t data_len)
+{
+    if (c_mmi_is_working()) {
+        c_mmi_put_recorder_data(data, data_len);
     }
 }
 
