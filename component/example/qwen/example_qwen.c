@@ -480,7 +480,7 @@ void app_example(void)
     s_local_sound_q = xQueueCreate(1, sizeof(local_sound_t));
     s_local_sound_play_done_sem = xSemaphoreCreateBinary();
     xTaskCreate(qwen_sdk_init_routine, "qwen_sdk_init", 1024 * 8, NULL, tskIDLE_PRIORITY + 1, NULL);
-    xTaskCreate(player_routine, "player", 1024, NULL, tskIDLE_PRIORITY + 2, NULL);
+    xTaskCreate(player_routine, "player", 1024, NULL, tskIDLE_PRIORITY + 1, NULL);
 }
 
 void at_chat_set(u16 argc, char **argv)
