@@ -23,13 +23,21 @@
 #include "ntp.h"
 #include "ali_cert.h"
 #include "vb6824.h"
+#include "sound.h"
 #include "example_qwen.h"
 
 #define TAG "QWEN"
 
 #define MMI_END_POINT "bailian.multimodalagent.aliyuncs.com"
 
-static SemaphoreHandle_t s_wss_ready_sem, s_player_sem;
+typedef struct local_sound {
+    const uint8_t *pcm_data;
+    size_t pcm_data_size;
+} local_sound_t;
+
+static SemaphoreHandle_t s_wss_ready_sem, s_player_sem, s_local_sound_play_done_sem;
+
+static QueueHandle_t s_local_sound_q;
 
 static int32_t mmi_event_callback(uint32_t event, void *param)
 {
@@ -73,6 +81,11 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
         case C_MMI_EVENT_ASR_END: {
             RTK_LOGI(TAG, "C_MMI_EVENT_ASR_END\n");
             vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
+            local_sound_t local_sound = {
+                .pcm_data = g_stop_recording_pcm,
+                .pcm_data_size = g_stop_recording_pcm_len,
+            };
+            xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
             break;
         }
         case C_MMI_EVENT_LLM_INCOMPLETE: {
@@ -399,25 +412,47 @@ void qwen_sdk_init_routine(void *arg)
 static void player_routine(void *args)
 {
     (void) args;
+
+    QueueSetHandle_t qset = xQueueCreateSet(1 + 1);
+    xQueueAddToSet(s_local_sound_q, qset);
+    xQueueAddToSet(s_player_sem, qset);
     for (;;) {
-        xSemaphoreTake(s_player_sem, portMAX_DELAY);
-        static uint8_t data[320];
-        size_t remainder = sizeof data;
-        while (!c_mmi_audio_recv_all() && remainder) {
-            size_t len = c_mmi_get_player_data(data + sizeof data - remainder, remainder);
-            remainder -= len;
-            if (remainder == 0) {
-                vb6824_send(VB6824_CMD_PLAY, data, sizeof data);
-                remainder = sizeof data;
+        QueueSetMemberHandle_t q = xQueueSelectFromSet(qset, portMAX_DELAY);
+        if (q == s_local_sound_q) {
+            local_sound_t local_sound;
+            if (xQueueReceive(s_local_sound_q, &local_sound, 0) == pdTRUE) {
+                for (size_t i = 0; i < local_sound.pcm_data_size; i += 320) {
+                    vb6824_send(VB6824_CMD_PLAY, local_sound.pcm_data + i, 320);
+                }
+                xSemaphoreGive(s_local_sound_play_done_sem);
             }
         }
-        RTK_LOGI(TAG, "Received all audio data\n");
+        else if (q == s_player_sem) {
+            if (xSemaphoreTake(s_player_sem, 0) == pdTRUE) {
+                static uint8_t data[320];
+                size_t remainder = sizeof data;
+                while (!c_mmi_audio_recv_all() && remainder) {
+                    size_t len = c_mmi_get_player_data(data + sizeof data - remainder, remainder);
+                    remainder -= len;
+                    if (remainder == 0) {
+                        vb6824_send(VB6824_CMD_PLAY, data, sizeof data);
+                        remainder = sizeof data;
+                    }
+                }
+            }
+        }
     }
 }
 
 void vb6824_on_report_asr(uint8_t *data, size_t data_len)
 {
     if (strncmp((char*)data, "你好小安", data_len) == 0) {
+        local_sound_t local_sound = {
+            .pcm_data = g_start_recording_pcm,
+            .pcm_data_size = g_start_recording_pcm_len,
+        };
+        xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
+        xSemaphoreTake(s_local_sound_play_done_sem, portMAX_DELAY);
         c_mmi_speech_start();
     }
     else if (strncmp((char*)data, "再见", data_len) == 0 || strncmp((char*)data, "不聊了", data_len) == 0) {
@@ -442,8 +477,10 @@ void app_example(void)
 {
     s_wss_ready_sem = xSemaphoreCreateBinary();
     s_player_sem = xSemaphoreCreateBinary();
+    s_local_sound_q = xQueueCreate(1, sizeof(local_sound_t));
+    s_local_sound_play_done_sem = xSemaphoreCreateBinary();
     xTaskCreate(qwen_sdk_init_routine, "qwen_sdk_init", 1024 * 8, NULL, tskIDLE_PRIORITY + 1, NULL);
-    xTaskCreate(player_routine, "player", 1024, NULL, tskIDLE_PRIORITY + 1, NULL);
+    xTaskCreate(player_routine, "player", 1024, NULL, tskIDLE_PRIORITY + 2, NULL);
 }
 
 void at_chat_set(u16 argc, char **argv)
