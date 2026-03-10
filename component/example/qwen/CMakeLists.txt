@@ -9,6 +9,7 @@ target_sources(
     ntp.c
     example_qwen.c
     vb6824.c
+    sound.c
 )
 
 target_include_directories(
