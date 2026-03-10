@@ -58,6 +58,20 @@ static int32_t mmi_event_callback(uint32_t event, void *param)
         }
         case C_MMI_EVENT_DATA_DEINIT: {
             RTK_LOGI(TAG, "C_MMI_EVENT_DATA_DEINIT\n");
+            local_sound_t local_sound = {
+                .pcm_data = g_disconnected_pcm,
+                .pcm_data_size = g_disconnected_pcm_len,
+            };
+            xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
+            break;
+        }
+        case C_MMI_EVENT_SPEECH_READY: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_SPEECH_READY\n");
+            local_sound_t local_sound = {
+                .pcm_data = g_connected_pcm,
+                .pcm_data_size = g_connected_pcm_len,
+            };
+            xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
             break;
         }
         case C_MMI_EVENT_SPEECH_START: {
@@ -365,7 +379,7 @@ void qwen_sdk_init_routine(void *arg)
     char *device_name = getenv("DEVICE_NAME");
     char *api_key = getenv("API_KEY");
     if (ws_id && app_id && app_secret && device_name && api_key) {
-        watchdog_init(4000);
+        watchdog_init(10000);
         watchdog_start();
         if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
             RTK_LOGI(TAG, "SDK Init Done\n");
@@ -417,9 +431,9 @@ static void player_routine(void *args)
     xQueueAddToSet(s_local_sound_q, qset);
     xQueueAddToSet(s_player_sem, qset);
     for (;;) {
+        local_sound_t local_sound;
         QueueSetMemberHandle_t q = xQueueSelectFromSet(qset, portMAX_DELAY);
         if (q == s_local_sound_q) {
-            local_sound_t local_sound;
             if (xQueueReceive(s_local_sound_q, &local_sound, 0) == pdTRUE) {
                 for (size_t i = 0; i < local_sound.pcm_data_size; i += 320) {
                     vb6824_send(VB6824_CMD_PLAY, local_sound.pcm_data + i, 320);
@@ -431,7 +445,7 @@ static void player_routine(void *args)
             if (xSemaphoreTake(s_player_sem, 0) == pdTRUE) {
                 static uint8_t data[320];
                 size_t remainder = sizeof data;
-                while (!c_mmi_audio_recv_all() && remainder) {
+                while (xQueuePeek(s_local_sound_q, &local_sound, 0) == pdFALSE && c_mmi_get_state() != C_MMI_STATE_LISTENING && !c_mmi_audio_recv_all() && remainder) {
                     size_t len = c_mmi_get_player_data(data + sizeof data - remainder, remainder);
                     remainder -= len;
                     if (remainder == 0) {
