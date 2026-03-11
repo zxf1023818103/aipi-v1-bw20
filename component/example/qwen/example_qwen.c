@@ -482,7 +482,7 @@ void vb6824_on_report_asr(uint8_t *data, size_t data_len)
 
 void vb6824_on_report_record(uint8_t *data, size_t data_len)
 {
-    if (c_mmi_is_working()) {
+    if (c_mmi_get_state() == C_MMI_STATE_LISTENING) {
         c_mmi_put_recorder_data(data, data_len);
     }
 }
