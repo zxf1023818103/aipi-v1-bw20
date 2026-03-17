@@ -9,8 +9,8 @@
 
 [submodule "component/ui"]
 	path = component/ui
-	url = https://github.com/Ameba-AIoT/ameba-ui.git
-	branch = master
+	url = https://github.com/zxf1023818103/ameba-ui.git
+	branch = st7789p3
 
 [submodule "component/aivoice"]
 	path = component/aivoice

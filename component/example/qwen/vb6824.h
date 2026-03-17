@@ -7,8 +7,8 @@
 extern "C" {
 #endif /* __cplusplus */
 
-#define VB6824_UART_TX PA_26
-#define VB6824_UART_RX PB_21
+#define VB6824_UART_TX PB_31
+#define VB6824_UART_RX PB_30
 #define VB6824_UART_IDX 0
 #define VB6824_UART_BAUDRATE 2000000
 #define VB6824_UART_DATABITS 8
