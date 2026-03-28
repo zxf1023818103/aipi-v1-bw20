@@ -21,6 +21,7 @@
 #include "hal.h"
 #include "config.h"
 #include "ntp.h"
+#include "ota.h"
 #include "ali_cert.h"
 #include "vb6824.h"
 #include "sound.h"
@@ -41,9 +42,7 @@ static QueueHandle_t s_local_sound_q;
 
 static int32_t mmi_event_callback(uint32_t event, void *param)
 {
-    char *text;
-
-    text = param;
+    char *text = param;
     switch (event) {
         case C_MMI_EVENT_USER_CONFIG: {
             RTK_LOGI(TAG, "C_MMI_EVENT_USER_CONFIG\n");
@@ -156,8 +155,7 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
                                 }
 
                                 char chunk[] = "chunked";
-                                /* chunked read */
-                                if (conn->response.trans_enc && memcmp(conn->response.trans_enc, chunk, strlen(chunk)) == 0) {
+                                if (conn->response.trans_enc && memcmp(conn->response.trans_enc, chunk, sizeof chunk - 1) == 0) {
                                     if (conn->response.trans_chunk_len == 0) {
                                         break;
                                     }
@@ -355,32 +353,35 @@ void qwen_sdk_init_routine(void *arg)
 {
     (void) arg;
 
-    vb6824_init();
     load_all_env();
     ntp_init();
+    ota_init();
+    vb6824_init();
 
+    // watchdog_init(10000);
+    // watchdog_start();
     while (LwIP_Check_Connectivity(NETIF_WLAN_STA_INDEX) != CONNECTION_VALID) {
+        // watchdog_refresh();
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
-
     ntp_start();
+    ota_set_wifi_connected(1);
 
-    while (!util_timestamp_inited()) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-
-    vb6824_set_volume(0x1b);
     vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
+    vb6824_set_volume(0x1b);
     vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
 
+    while (!util_timestamp_inited()) {
+        // watchdog_refresh();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+#if 0
     char *ws_id = getenv("WS_ID");
     char *app_id = getenv("APP_ID");
     char *app_secret = getenv("APP_SECRET");
     char *device_name = getenv("DEVICE_NAME");
     char *api_key = getenv("API_KEY");
     if (ws_id && app_id && app_secret && device_name && api_key) {
-        watchdog_init(10000);
-        watchdog_start();
         if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
             RTK_LOGI(TAG, "SDK Init Done\n");
             for (;;) {
@@ -418,8 +419,12 @@ void qwen_sdk_init_routine(void *arg)
         qwen_sdk_test_init();
         qwen_sdk_test();
         util_storage_erase();
+        for (;;) {
+            watchdog_refresh();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
     }
-
+#endif
     vTaskDelete(NULL);
 }
 

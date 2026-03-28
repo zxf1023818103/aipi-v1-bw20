@@ -65,6 +65,22 @@ extern "C" {
 /// 作用：产测能量测试回复
 #define VB6824_CMD_REPORT_MP 0x2088
 
+#define JL_OTA_RPC_PORT 23333
+
+#define JL_OTA_INIT_BAUDRATE 9600
+
+#define JL_OTA_UPDATE_BAUDRATE 921600
+
+#define JL_OTA_UPDATE_START 0x01
+
+#define JL_OTA_UPDATE_READ 0x02
+
+#define JL_OTA_UPDATE_STOP 0x03
+
+#define JL_OTA_UPDATE_LEN 0x04
+
+#define JL_OTA_UPDATE_KEEPALIVE 0x05
+
 void vb6824_init(void);
 void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len);
 void vb6824_set_volume(uint8_t volume);
