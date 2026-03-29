@@ -24,6 +24,10 @@ extern const uint8_t g_stop_recording_pcm[];
 
 extern const size_t g_stop_recording_pcm_len;
 
+extern const uint8_t g_silence_sound_opus[];
+
+extern const size_t g_silence_sound_opus_len;
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */
