@@ -677,12 +677,12 @@ int LwIP_Check_Connectivity(uint8_t idx)
 			  && (join_status == RTW_JOINSTATUS_SUCCESS)
 #if defined(CONFIG_LWIP_USB_ETHERNET_BRIDGE) && CONFIG_LWIP_USB_ETHERNET_BRIDGE
 			 )) {
-			RTK_LOGS(NOTAG, RTK_LOG_INFO, "Wait for WiFi Connect Success...\n");
+			// RTK_LOGS(NOTAG, RTK_LOG_INFO, "Wait for WiFi Connect Success...\n");
 #else
 			  &&(*(u32 *)LwIP_GetIP(NETIF_WLAN_STA_INDEX) != IP_ADDR_INVALID))) {
-			RTK_LOGS(NOTAG, RTK_LOG_INFO, "Wait for WiFi and DHCP Connect Success...\n");
+			// RTK_LOGS(NOTAG, RTK_LOG_INFO, "Wait for WiFi and DHCP Connect Success...\n");
 #endif
-			RTK_LOGS(NOTAG, RTK_LOG_INFO, "Please use AT+WLCONN to connect AP first time\n");
+			// RTK_LOGS(NOTAG, RTK_LOG_INFO, "Please use AT+WLCONN to connect AP first time\n");
 			return CONNECTION_INVALID;
 		} else {
 			return CONNECTION_VALID;
