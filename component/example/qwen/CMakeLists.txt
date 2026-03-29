@@ -7,6 +7,7 @@ target_sources(
     at_command.c
     hal.c
     ntp.c
+    ota.c
     example_qwen.c
     vb6824.c
     sound.c
