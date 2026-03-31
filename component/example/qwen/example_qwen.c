@@ -369,13 +369,14 @@ void qwen_sdk_init_routine(void *arg)
 
     vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
     vb6824_set_volume(0x1b);
-    vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
 
     while (!util_timestamp_inited()) {
         // watchdog_refresh();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-#if 0
+
+    vb6824_wait_for_ota_exited();
+
     char *ws_id = getenv("WS_ID");
     char *app_id = getenv("APP_ID");
     char *app_secret = getenv("APP_SECRET");
@@ -424,7 +425,6 @@ void qwen_sdk_init_routine(void *arg)
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
-#endif
     vTaskDelete(NULL);
 }
 

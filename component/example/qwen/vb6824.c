@@ -28,7 +28,7 @@ static serial_t vb6824_serial = { .uart_idx = VB6824_UART_IDX };
 
 static MessageBufferHandle_t vb6824_recv_frame_mb;
 
-static SemaphoreHandle_t vb6824_dma_tx_done_sem;
+static SemaphoreHandle_t vb6824_dma_tx_done_sem, jl_ota_exited_sem;
 
 static QueueHandle_t vb6824_version_queue;
 
@@ -190,6 +190,7 @@ static void vb6824_uart_irq_handler(uint32_t id, SerialIrq event)
                 static uint16_t current_checksum, target_checksum;
                 status = jl_ota_uart_finite_state_machine(status, input, buffer.data, &data_len, sizeof buffer.data, &current_checksum, &target_checksum, &success);
                 if (success) {
+                    rtk_log_memory_dump_byte(buffer.data, data_len);
                     xMessageBufferSendFromISR(vb6824_recv_frame_mb, buffer.data, data_len, NULL);
                 }
             }
@@ -413,18 +414,24 @@ static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port
                 jl_ota_init();
                 int offset = get_axk_ota_firmware_offset(conn, path);
                 if (offset >= 0) {
+                    uint8_t last_opcode = 0;
                     int ota_mode_entered = 0;
                     uint32_t baudrate = JL_OTA_INIT_BAUDRATE;
+                    uint32_t timeout_sec = 1;
                     int retry_count = 0;
-                    for (;;) {
+                    int break_loop = 0;
+                    while (break_loop == 0) {
                         if (!ota_mode_entered) {
-                            RTK_LOGI(TAG, "Waiting for OTA update...\n");
-                            jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
+                            RTK_LOGI(TAG, "Init OTA update...\n");
                             retry_count++;
-                            if (retry_count == 10) {
-                                baudrate = JL_OTA_INIT_BAUDRATE;
-                                serial_baud(&vb6824_serial, baudrate);
+                            if (retry_count == 3) {
+                                jl_uart_send_packet(0x06, NULL, 0);
+                                retry_count = 0;
                             }
+                        }
+                        if (last_opcode == JL_OTA_UPDATE_START) {
+                            RTK_LOGI(TAG, "Waiting for OTA update start...\n");
+                            jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
                         }
                         fd_set read_fds, except_fds;
                         FD_ZERO(&read_fds);
@@ -432,7 +439,7 @@ static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port
                         FD_SET(conn->sock, &read_fds);
                         memcpy(&except_fds, &read_fds, sizeof except_fds);
                         struct timeval timeout = {
-                            .tv_sec = ota_mode_entered ? 60 : 1,
+                            .tv_sec = timeout_sec,
                         };
                         int ret = select(conn->sock > rpc_responder_socket ? conn->sock + 1 : rpc_responder_socket + 1, &read_fds, NULL, &except_fds, &timeout);
                         if (ret >= 0) {
@@ -458,22 +465,20 @@ static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port
                                 break;
                             }
                             if (FD_ISSET(rpc_responder_socket, &read_fds)) {
-                                RTK_LOGI(TAG, "RPC connection is readable\n");
                                 uint8_t buffer[32];
                                 int buffer_len = lwip_recvfrom(rpc_responder_socket, buffer, sizeof buffer, 0, NULL, NULL);
                                 if (buffer_len > 0) {
-                                    rtk_log_memory_dump_byte(buffer, buffer_len);
                                     const uint8_t opcode = buffer[0];
                                     const uint8_t *data = buffer + 1;
                                     const int data_len = buffer_len - 1;
+                                    last_opcode = opcode;
                                     switch (opcode) {
                                         case JL_OTA_UPDATE_START: {
-                                            ota_mode_entered = 0;
                                             RTK_LOGI(TAG, "JL_OTA_UPDATE_START\n");
-                                            baudrate = JL_OTA_UPDATE_BAUDRATE;
+                                            ota_mode_entered = 1;
+                                            baudrate = JL_OTA_INIT_BAUDRATE;
                                             retry_count = 0;
                                             jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
-                                            serial_baud(&vb6824_serial, baudrate);
                                             break;
                                         }
                                         case JL_OTA_UPDATE_READ: {
@@ -499,6 +504,9 @@ static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port
                                                         serial_send_stream_dma(&vb6824_serial, (char*)buffer, len + 15);
                                                         xSemaphoreTake(vb6824_dma_tx_done_sem, portMAX_DELAY);
                                                     }
+                                                    else {
+                                                        break_loop = 1;
+                                                    }
                                                     vPortFree(buffer);
                                                 }
                                             }
@@ -511,6 +519,7 @@ static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port
                                                 RTK_LOGI(TAG, "JL_OTA_UPDATE_STOP code=0x%02x\n", code);
                                                 jl_uart_send_packet(JL_OTA_UPDATE_STOP, NULL, 0);
                                                 ota_completed = 1;
+                                                break_loop = 1;
                                             }
                                             else {
                                                 RTK_LOGE(TAG, "Invalid data length for JL_OTA_UPDATE_STOP\n");
@@ -523,6 +532,7 @@ static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port
                                                 uint32_t len;
                                                 memcpy(&len, data, 4);
                                                 RTK_LOGI(TAG, "JL_OTA_UPDATE_LEN len=%u\n", len);
+                                                jl_uart_send_packet(JL_OTA_UPDATE_LEN, NULL, 0);
                                             }
                                             else {
                                                 RTK_LOGE(TAG, "Invalid data length for JL_OTA_UPDATE_LEN\n");
@@ -592,7 +602,9 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
             if (json) {
                 cJSON_AddStringToObject(json, "device_name", device_name);
                 cJSON_AddStringToObject(json, "type", "vb6824");
-                cJSON_AddStringToObject(json, "version", version);
+                if (version) {
+                    cJSON_AddStringToObject(json, "version", version);
+                }
                 char *request_body = cJSON_PrintUnformatted(json);
                 cJSON_Delete(json);
                 size_t request_body_len = strlen(request_body);
@@ -705,31 +717,47 @@ static void jl_ota_routine(void *args)
                 };
                 if (lwip_bind(rpc_responder_socket, (const struct sockaddr*)&address, sizeof address) == 0) {
                     RTK_LOGI(TAG, "RPC responder is starting\n");
-                    char *version = NULL;
-                    xQueueReceive(vb6824_version_queue, &version, portMAX_DELAY);
-                    cJSON *result = jl_ota_request_update_info(host, port, path, use_tls, device_name, version);
-                    vPortFree(version);
-                    if (result) {
-                        if (cJSON_IsObject(result)) {
-                            cJSON *data = cJSON_GetObjectItem(result, "data");
-                            if (cJSON_IsObject(data)) {
-                                char *host = cJSON_GetObjectItem(data, "host")->valuestring;
-                                uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
-                                char *path = cJSON_GetObjectItem(data, "path")->valuestring;
-                                int tls = cJSON_GetObjectItem(data, "tls")->valueint;
-                                jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
+                    int retry_count = 5;
+                    serial_baud(&vb6824_serial, VB6824_UART_BAUDRATE);
+                    for (;;) {
+                        char *version = NULL;
+                        while (xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(3000))) {
+                            vPortFree(version);
+                            version = NULL;
+                        }
+                        vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
+                        if (xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(3000)) == pdFALSE && retry_count-- > 0) {
+                            RTK_LOGE(TAG, "Request version failed\n");
+                            continue;
+                        }
+                        cJSON *result = jl_ota_request_update_info(host, port, path, use_tls, device_name, version);
+                        if (version) {
+                            vPortFree(version);
+                        }
+                        if (result) {
+                            if (cJSON_IsObject(result)) {
+                                cJSON *data = cJSON_GetObjectItem(result, "data");
+                                if (cJSON_IsObject(data)) {
+                                    char *host = cJSON_GetObjectItem(data, "host")->valuestring;
+                                    uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
+                                    char *path = cJSON_GetObjectItem(data, "path")->valuestring;
+                                    int tls = cJSON_GetObjectItem(data, "tls")->valueint;
+                                    jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
+                                    RTK_LOGI(TAG, "OTA finished\n");
+                                }
+                                else {
+                                    RTK_LOGI(TAG, "OTA update is not required\n");
+                                    break;
+                                }
                             }
                             else {
-                                RTK_LOGI(TAG, "No OTA update needed\n");
+                                RTK_LOGE(TAG, "Invalid OTA response format\n");
                             }
+                            cJSON_Delete(result);
                         }
                         else {
-                            RTK_LOGE(TAG, "Invalid OTA response format\n");
+                            RTK_LOGE(TAG, "Failed to get OTA update info\n");
                         }
-                        cJSON_Delete(result);
-                    }
-                    else {
-                        RTK_LOGE(TAG, "Failed to get OTA update info\n");
                     }
                 }
                 else {
@@ -749,6 +777,8 @@ static void jl_ota_routine(void *args)
         RTK_LOGE(TAG, "Missing OTA configuration\n");
     }
 
+    xSemaphoreGive(jl_ota_exited_sem);
+
     vTaskDelete(NULL);
 }
 
@@ -757,6 +787,7 @@ void vb6824_init(void)
     vb6824_recv_frame_mb = xMessageBufferCreate(512);
     vb6824_dma_tx_done_sem = xSemaphoreCreateBinary();
     vb6824_version_queue = xQueueCreate(1, sizeof(char*));
+    jl_ota_exited_sem = xSemaphoreCreateBinary();
     xTaskCreate(vb6824_recv_routine, "vb6824_recv", 1024, NULL, 1, NULL);
 
     serial_init(&vb6824_serial, VB6824_UART_TX, VB6824_UART_RX);
@@ -792,4 +823,9 @@ void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len)
 void vb6824_set_volume(uint8_t volume)
 {
     vb6824_send(VB6824_CMD_SET_VOL, &volume, 1);
+}
+
+void vb6824_wait_for_ota_exited(void)
+{
+    xSemaphoreTake(jl_ota_exited_sem, portMAX_DELAY);
 }
