@@ -402,8 +402,6 @@ static int get_axk_ota_firmware_offset(struct httpc_conn *conn, char *path)
 
 static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port, char *path, int use_tls)
 {
-    RTK_LOGI(TAG, "OTA host=%s port=%u path=%s\n", host, port, path);
-
     // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
     int ota_completed = 0;
     while (!ota_completed) {
@@ -738,12 +736,19 @@ static void jl_ota_routine(void *args)
                             if (cJSON_IsObject(result)) {
                                 cJSON *data = cJSON_GetObjectItem(result, "data");
                                 if (cJSON_IsObject(data)) {
+#if 0
                                     char *host = cJSON_GetObjectItem(data, "host")->valuestring;
                                     uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
                                     char *path = cJSON_GetObjectItem(data, "path")->valuestring;
                                     int tls = cJSON_GetObjectItem(data, "tls")->valueint;
+                                    RTK_LOGI(TAG, "OTA host=%s port=%u path=%s tls=%d\n", host, port, path, tls);
                                     jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
                                     RTK_LOGI(TAG, "OTA finished\n");
+#else
+                                    (void) jl_do_ota_update;
+                                    RTK_LOGI(TAG, "OTA skipped\n");
+#endif
+                                    break;
                                 }
                                 else {
                                     RTK_LOGI(TAG, "OTA update is not required\n");
