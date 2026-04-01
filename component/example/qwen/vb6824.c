@@ -598,10 +598,10 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
         if (httpc_conn_connect(conn, host, port, 0) == 0) {
             cJSON *json = cJSON_CreateObject();
             if (json) {
-                cJSON_AddStringToObject(json, "device_name", device_name);
-                cJSON_AddStringToObject(json, "type", "vb6824");
+                cJSON_AddStringToObject(json, "deviceName", device_name);
+                cJSON_AddStringToObject(json, "product", "vb6824");
                 if (version) {
-                    cJSON_AddStringToObject(json, "version", version);
+                    cJSON_AddStringToObject(json, "firmwareName", version);
                 }
                 char *request_body = cJSON_PrintUnformatted(json);
                 cJSON_Delete(json);
@@ -700,7 +700,7 @@ static void jl_ota_routine(void *args)
     }
 
     if (path == NULL) {
-        path = "/ota";
+        path = "/upgrade";
     }
 
     if (host && path && device_name) {
@@ -736,11 +736,11 @@ static void jl_ota_routine(void *args)
                             if (cJSON_IsObject(result)) {
                                 cJSON *data = cJSON_GetObjectItem(result, "data");
                                 if (cJSON_IsObject(data)) {
-#if 0
+#if 1
                                     char *host = cJSON_GetObjectItem(data, "host")->valuestring;
                                     uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
                                     char *path = cJSON_GetObjectItem(data, "path")->valuestring;
-                                    int tls = cJSON_GetObjectItem(data, "tls")->valueint;
+                                    int tls = cJSON_GetObjectItem(data, "tlsEnabled")->valueint;
                                     RTK_LOGI(TAG, "OTA host=%s port=%u path=%s tls=%d\n", host, port, path, tls);
                                     jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
                                     RTK_LOGI(TAG, "OTA finished\n");
