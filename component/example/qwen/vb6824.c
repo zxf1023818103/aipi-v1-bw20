@@ -696,7 +696,7 @@ static void jl_ota_routine(void *args)
     }
 
     if (host == NULL) {
-        host = "aipi-v-bw-drdnfahoxy.cn-beijing.fcapp.run";
+        host = "aipi-v-bw-api-ohfubnzzqo.cn-beijing.fcapp.run";
     }
 
     if (path == NULL) {
