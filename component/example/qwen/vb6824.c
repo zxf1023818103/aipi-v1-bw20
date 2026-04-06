@@ -613,11 +613,11 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
                         httpc_response_read_header(conn);
                         if (httpc_response_is_status(conn, (char *)"200 OK")) {
                             size_t max_response_len = conn->response.content_len ? conn->response.content_len : 1024;
-                            uint8_t *response = pvPortMalloc(max_response_len);
+                            uint8_t *response = pvPortMalloc(max_response_len + 1);
                             if (response) {
                                 int total_size = 0;
                                 while (1) {
-                                    int read_size = httpc_response_read_data(conn, response + total_size, max_response_len - total_size - 1);
+                                    int read_size = httpc_response_read_data(conn, response + total_size, max_response_len - total_size);
                                     if (read_size > 0) {
                                         total_size += read_size;
                                     }
@@ -737,12 +737,30 @@ static void jl_ota_routine(void *args)
                                 if (cJSON_IsTrue(cJSON_GetObjectItem(result, "success"))) {
                                     cJSON *data = cJSON_GetObjectItem(result, "data");
                                     if (cJSON_IsObject(data)) {
-                                        char *host = cJSON_GetObjectItem(data, "host")->valuestring;
-                                        uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
-                                        char *path = cJSON_GetObjectItem(data, "path")->valuestring;
-                                        int tls = cJSON_GetObjectItem(data, "tlsEnabled")->valueint;
-                                        RTK_LOGI(TAG, "OTA host=%s port=%u path=%s tls=%d\n", host, port, path, tls);
-                                        ota_completed = jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
+                                        cJSON *nameObject = cJSON_GetObjectItem(data, "name");
+                                        cJSON *hostObject = cJSON_GetObjectItem(data, "host");
+                                        cJSON *portObject = cJSON_GetObjectItem(data, "port");
+                                        cJSON *pathObject = cJSON_GetObjectItem(data, "path");
+                                        cJSON *tlsEnabledObject = cJSON_GetObjectItem(data, "tlsEnabled");
+                                        if (nameObject && hostObject && portObject && pathObject && tlsEnabledObject) {
+                                            char *name = nameObject->valuestring;
+                                            char *host = hostObject->valuestring;
+                                            uint16_t port = (uint16_t)portObject->valueint;
+                                            char *path = pathObject->valuestring;
+                                            int tlsEnabled = tlsEnabledObject->valueint;
+                                            RTK_LOGI(TAG, "Download OTA Upgrade Firmware Start\n");
+                                            RTK_LOGI(TAG, "Name: %s\n", name);
+                                            RTK_LOGI(TAG, "Host: %s\n", host);
+                                            RTK_LOGI(TAG, "Port: %u\n", port);
+                                            RTK_LOGI(TAG, "Path: %s\n", path);
+                                            RTK_LOGI(TAG, "TLS Enabled: %d\n", tlsEnabled);
+                                            ota_completed = jl_do_ota_update(rpc_responder_socket, host, port, path, tlsEnabled);
+                                        }
+                                        else {
+                                            char *dataString = cJSON_PrintUnformatted(data);
+                                            RTK_LOGE(TAG, "Invalid Upgrade Response: %s\n", dataString);
+                                            cJSON_free(dataString);
+                                        }
                                     }
                                     else {
                                         RTK_LOGI(TAG, "OTA update is not required\n");
