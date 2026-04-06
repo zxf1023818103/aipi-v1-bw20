@@ -611,6 +611,13 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
                     httpc_request_write_header_finish(conn);
                     if (httpc_request_write_data(conn, (uint8_t*)request_body, request_body_len) == (int)request_body_len) {
                         httpc_response_read_header(conn);
+                        {
+                            char *request_id;
+                            if (httpc_response_get_header_field(conn, "X-Fc-Request-Id", &request_id) == 0) {
+                                RTK_LOGI(TAG, "X-Fc-Request-Id: %s\n", request_id);
+                                httpc_free(request_id);
+                            }
+                        }
                         if (httpc_response_is_status(conn, (char *)"200 OK")) {
                             size_t max_response_len = conn->response.content_len ? conn->response.content_len : 1024;
                             uint8_t *response = pvPortMalloc(max_response_len + 1);
