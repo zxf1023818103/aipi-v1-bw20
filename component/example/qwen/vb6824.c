@@ -400,179 +400,178 @@ static int get_axk_ota_firmware_offset(struct httpc_conn *conn, char *path)
     return -1;
 }
 
-static void jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port, char *path, int use_tls)
+static int jl_do_ota_update(int rpc_responder_socket, char *host, uint16_t port, char *path, int use_tls)
 {
-    // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
     int ota_completed = 0;
-    while (!ota_completed) {
-        struct httpc_conn *conn = httpc_conn_new(use_tls ? HTTPC_SECURE_TLS : HTTPC_SECURE_NONE, NULL, NULL, NULL);
-        if (conn) {
-            if (httpc_conn_connect(conn, host, port, 0) == 0) {
-                RTK_LOGI(TAG, "Connected to OTA server\n");
-                jl_ota_init();
-                int offset = get_axk_ota_firmware_offset(conn, path);
-                if (offset >= 0) {
-                    uint8_t last_opcode = 0;
-                    int ota_mode_entered = 0;
-                    uint32_t baudrate = JL_OTA_INIT_BAUDRATE;
-                    uint32_t timeout_sec = 1;
-                    int retry_count = 0;
-                    int break_loop = 0;
-                    while (break_loop == 0) {
-                        if (!ota_mode_entered) {
-                            RTK_LOGI(TAG, "Init OTA update...\n");
-                            retry_count++;
-                            if (retry_count == 3) {
-                                jl_uart_send_packet(0x06, NULL, 0);
-                                retry_count = 0;
-                            }
-                        }
-                        if (last_opcode == JL_OTA_UPDATE_START) {
-                            RTK_LOGI(TAG, "Waiting for OTA update start...\n");
-                            jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
-                        }
-                        fd_set read_fds, except_fds;
-                        FD_ZERO(&read_fds);
-                        FD_SET(rpc_responder_socket, &read_fds);
-                        FD_SET(conn->sock, &read_fds);
-                        memcpy(&except_fds, &read_fds, sizeof except_fds);
-                        struct timeval timeout = {
-                            .tv_sec = timeout_sec,
-                        };
-                        int ret = select(conn->sock > rpc_responder_socket ? conn->sock + 1 : rpc_responder_socket + 1, &read_fds, NULL, &except_fds, &timeout);
-                        if (ret >= 0) {
-                            if (FD_ISSET(conn->sock, &except_fds)) {
-                                RTK_LOGE(TAG, "HTTP connection error\n");
-                                break;
-                            }
-                            if (FD_ISSET(conn->sock, &read_fds)) {
-                                RTK_LOGI(TAG, "HTTP connection is readable\n");
-                                if (httpc_response_read_header(conn) == 0) {
-                                    uint8_t buffer[32];
-                                    while (httpc_response_read_data(conn, buffer, sizeof buffer) > 0) {
-                                        RTK_LOGI(TAG, "Received data: %.*s\n", (int)sizeof buffer, buffer);
-                                    }
-                                }
-                                else {
-                                    RTK_LOGE(TAG, "Failed to read HTTP response header\n");
-                                    break;
-                                }
-                            }
-                            if (FD_ISSET(rpc_responder_socket, &except_fds)) {
-                                RTK_LOGE(TAG, "RPC connection error\n");
-                                break;
-                            }
-                            if (FD_ISSET(rpc_responder_socket, &read_fds)) {
-                                uint8_t buffer[32];
-                                int buffer_len = lwip_recvfrom(rpc_responder_socket, buffer, sizeof buffer, 0, NULL, NULL);
-                                if (buffer_len > 0) {
-                                    const uint8_t opcode = buffer[0];
-                                    const uint8_t *data = buffer + 1;
-                                    const int data_len = buffer_len - 1;
-                                    last_opcode = opcode;
-                                    switch (opcode) {
-                                        case JL_OTA_UPDATE_START: {
-                                            RTK_LOGI(TAG, "JL_OTA_UPDATE_START\n");
-                                            ota_mode_entered = 1;
-                                            baudrate = JL_OTA_INIT_BAUDRATE;
-                                            retry_count = 0;
-                                            jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
-                                            break;
-                                        }
-                                        case JL_OTA_UPDATE_READ: {
-                                            if (data_len == 8) {
-                                                ota_mode_entered = 1;
-                                                uint32_t addr, len;
-                                                memcpy(&addr, data, 4);
-                                                memcpy(&len, data + 4, 4);
-                                                RTK_LOGI(TAG, "JL_OTA_UPDATE_READ addr=%u len=%u\n", addr, len);
-                                                const size_t buffer_len = len + 6 + 9;
-                                                uint8_t *buffer = pvPortMalloc(buffer_len);
-                                                if (buffer) {
-                                                    buffer[0] = 0xaa;
-                                                    buffer[1] = 0x55;
-                                                    uint16_t cmd_len = len + 9;
-                                                    memcpy(buffer + 2, &cmd_len, 2);
-                                                    buffer[4] = JL_OTA_UPDATE_READ;
-                                                    memcpy(buffer + 5, &addr, 4);
-                                                    memcpy(buffer + 9, &len, 4);
-                                                    if (jl_ota_http_read(conn, path, addr + offset, buffer + 13, len) >= 0) {
-                                                        uint16_t checksum = crc16_ccitt((uint8_t*)buffer, len + 13);
-                                                        memcpy(buffer + len + 13, &checksum, 2);
-                                                        serial_send_stream_dma(&vb6824_serial, (char*)buffer, len + 15);
-                                                        xSemaphoreTake(vb6824_dma_tx_done_sem, portMAX_DELAY);
-                                                    }
-                                                    else {
-                                                        break_loop = 1;
-                                                    }
-                                                    vPortFree(buffer);
-                                                }
-                                            }
-                                            break;
-                                        }
-                                        case JL_OTA_UPDATE_STOP: {
-                                            if (data_len == 1) {
-                                                ota_mode_entered = 1;
-                                                int code = data[0];
-                                                RTK_LOGI(TAG, "JL_OTA_UPDATE_STOP code=0x%02x\n", code);
-                                                jl_uart_send_packet(JL_OTA_UPDATE_STOP, NULL, 0);
-                                                ota_completed = 1;
-                                                break_loop = 1;
-                                            }
-                                            else {
-                                                RTK_LOGE(TAG, "Invalid data length for JL_OTA_UPDATE_STOP\n");
-                                            }
-                                            break;
-                                        }
-                                        case JL_OTA_UPDATE_LEN: {
-                                            if (data_len == 4) {
-                                                ota_mode_entered = 1;
-                                                uint32_t len;
-                                                memcpy(&len, data, 4);
-                                                RTK_LOGI(TAG, "JL_OTA_UPDATE_LEN len=%u\n", len);
-                                                jl_uart_send_packet(JL_OTA_UPDATE_LEN, NULL, 0);
-                                            }
-                                            else {
-                                                RTK_LOGE(TAG, "Invalid data length for JL_OTA_UPDATE_LEN\n");
-                                            }
-                                            break;
-                                        }
-                                        case JL_OTA_UPDATE_KEEPALIVE: {
-                                            ota_mode_entered = 1;
-                                            RTK_LOGI(TAG, "JL_OTA_UPDATE_KEEPALIVE\n");
-                                            jl_uart_send_packet(JL_OTA_UPDATE_KEEPALIVE, NULL, 0);
-                                            break;
-                                        }
-                                        default: {
-                                            RTK_LOGE(TAG, "Unknown opcode %d\n", opcode);
-                                            break;
-                                        }
-                                    }
-                                }
-                                else {
-                                    RTK_LOGE(TAG, "Failed to receive RPC message\n");
-                                }
-                            }
-                        }
-                        else {
-                            RTK_LOGE(TAG, "select error\n");
-                            break;
+    struct httpc_conn *conn = httpc_conn_new(use_tls ? HTTPC_SECURE_TLS : HTTPC_SECURE_NONE, NULL, NULL, NULL);
+    if (conn) {
+        if (httpc_conn_connect(conn, host, port, 0) == 0) {
+            RTK_LOGI(TAG, "Connected to OTA server\n");
+            jl_ota_init();
+            int offset = get_axk_ota_firmware_offset(conn, path);
+            if (offset >= 0) {
+                uint8_t last_opcode = 0;
+                int ota_mode_entered = 0;
+                uint32_t baudrate = JL_OTA_INIT_BAUDRATE;
+                uint32_t timeout_sec = 1;
+                int retry_count = 0;
+                int break_loop = 0;
+                while (break_loop == 0) {
+                    if (!ota_mode_entered) {
+                        RTK_LOGI(TAG, "Init OTA update...\n");
+                        retry_count++;
+                        if (retry_count == 3) {
+                            jl_uart_send_packet(0x06, NULL, 0);
+                            retry_count = 0;
                         }
                     }
-                }
-                else {
-                    RTK_LOGE(TAG, "Failed to get OTA firmware offset\n");
+                    if (last_opcode == JL_OTA_UPDATE_START) {
+                        RTK_LOGI(TAG, "Waiting for OTA update start...\n");
+                        jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
+                    }
+                    fd_set read_fds, except_fds;
+                    FD_ZERO(&read_fds);
+                    FD_SET(rpc_responder_socket, &read_fds);
+                    FD_SET(conn->sock, &read_fds);
+                    memcpy(&except_fds, &read_fds, sizeof except_fds);
+                    struct timeval timeout = {
+                        .tv_sec = timeout_sec,
+                    };
+                    int ret = select(conn->sock > rpc_responder_socket ? conn->sock + 1 : rpc_responder_socket + 1, &read_fds, NULL, &except_fds, &timeout);
+                    if (ret >= 0) {
+                        if (FD_ISSET(conn->sock, &except_fds)) {
+                            RTK_LOGE(TAG, "HTTP connection error\n");
+                            break;
+                        }
+                        if (FD_ISSET(conn->sock, &read_fds)) {
+                            RTK_LOGI(TAG, "HTTP connection is readable\n");
+                            if (httpc_response_read_header(conn) == 0) {
+                                uint8_t buffer[32];
+                                while (httpc_response_read_data(conn, buffer, sizeof buffer) > 0) {
+                                    RTK_LOGI(TAG, "Received data: %.*s\n", (int)sizeof buffer, buffer);
+                                }
+                            }
+                            else {
+                                RTK_LOGE(TAG, "Failed to read HTTP response header\n");
+                                break;
+                            }
+                        }
+                        if (FD_ISSET(rpc_responder_socket, &except_fds)) {
+                            RTK_LOGE(TAG, "RPC connection error\n");
+                            break;
+                        }
+                        if (FD_ISSET(rpc_responder_socket, &read_fds)) {
+                            uint8_t buffer[32];
+                            int buffer_len = lwip_recvfrom(rpc_responder_socket, buffer, sizeof buffer, 0, NULL, NULL);
+                            if (buffer_len > 0) {
+                                const uint8_t opcode = buffer[0];
+                                const uint8_t *data = buffer + 1;
+                                const int data_len = buffer_len - 1;
+                                last_opcode = opcode;
+                                switch (opcode) {
+                                    case JL_OTA_UPDATE_START: {
+                                        RTK_LOGI(TAG, "JL_OTA_UPDATE_START\n");
+                                        ota_mode_entered = 1;
+                                        baudrate = JL_OTA_INIT_BAUDRATE;
+                                        retry_count = 0;
+                                        jl_uart_send_packet(JL_OTA_UPDATE_START, &baudrate, sizeof baudrate);
+                                        break;
+                                    }
+                                    case JL_OTA_UPDATE_READ: {
+                                        if (data_len == 8) {
+                                            ota_mode_entered = 1;
+                                            uint32_t addr, len;
+                                            memcpy(&addr, data, 4);
+                                            memcpy(&len, data + 4, 4);
+                                            RTK_LOGI(TAG, "JL_OTA_UPDATE_READ addr=%u len=%u\n", addr, len);
+                                            const size_t buffer_len = len + 6 + 9;
+                                            uint8_t *buffer = pvPortMalloc(buffer_len);
+                                            if (buffer) {
+                                                buffer[0] = 0xaa;
+                                                buffer[1] = 0x55;
+                                                uint16_t cmd_len = len + 9;
+                                                memcpy(buffer + 2, &cmd_len, 2);
+                                                buffer[4] = JL_OTA_UPDATE_READ;
+                                                memcpy(buffer + 5, &addr, 4);
+                                                memcpy(buffer + 9, &len, 4);
+                                                if (jl_ota_http_read(conn, path, addr + offset, buffer + 13, len) >= 0) {
+                                                    uint16_t checksum = crc16_ccitt((uint8_t*)buffer, len + 13);
+                                                    memcpy(buffer + len + 13, &checksum, 2);
+                                                    serial_send_stream_dma(&vb6824_serial, (char*)buffer, len + 15);
+                                                    xSemaphoreTake(vb6824_dma_tx_done_sem, portMAX_DELAY);
+                                                }
+                                                else {
+                                                    break_loop = 1;
+                                                }
+                                                vPortFree(buffer);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    case JL_OTA_UPDATE_STOP: {
+                                        if (data_len == 1) {
+                                            ota_mode_entered = 1;
+                                            int code = data[0];
+                                            RTK_LOGI(TAG, "JL_OTA_UPDATE_STOP code=0x%02x\n", code);
+                                            jl_uart_send_packet(JL_OTA_UPDATE_STOP, NULL, 0);
+                                            ota_completed = 1;
+                                            break_loop = 1;
+                                        }
+                                        else {
+                                            RTK_LOGE(TAG, "Invalid data length for JL_OTA_UPDATE_STOP\n");
+                                        }
+                                        break;
+                                    }
+                                    case JL_OTA_UPDATE_LEN: {
+                                        if (data_len == 4) {
+                                            ota_mode_entered = 1;
+                                            uint32_t len;
+                                            memcpy(&len, data, 4);
+                                            RTK_LOGI(TAG, "JL_OTA_UPDATE_LEN len=%u\n", len);
+                                            jl_uart_send_packet(JL_OTA_UPDATE_LEN, NULL, 0);
+                                        }
+                                        else {
+                                            RTK_LOGE(TAG, "Invalid data length for JL_OTA_UPDATE_LEN\n");
+                                        }
+                                        break;
+                                    }
+                                    case JL_OTA_UPDATE_KEEPALIVE: {
+                                        ota_mode_entered = 1;
+                                        RTK_LOGI(TAG, "JL_OTA_UPDATE_KEEPALIVE\n");
+                                        jl_uart_send_packet(JL_OTA_UPDATE_KEEPALIVE, NULL, 0);
+                                        break;
+                                    }
+                                    default: {
+                                        RTK_LOGE(TAG, "Unknown opcode %d\n", opcode);
+                                        break;
+                                    }
+                                }
+                            }
+                            else {
+                                RTK_LOGE(TAG, "Failed to receive RPC message\n");
+                            }
+                        }
+                    }
+                    else {
+                        RTK_LOGE(TAG, "select error\n");
+                        break;
+                    }
                 }
             }
             else {
-                RTK_LOGE(TAG, "Failed to connect to server");
+                RTK_LOGE(TAG, "Failed to get OTA firmware offset\n");
             }
+            httpc_conn_close(conn);
         }
         else {
-            RTK_LOGE(TAG, "Failed to create httpc connection");
+            RTK_LOGE(TAG, "Failed to connect to server");
         }
         httpc_conn_free(conn);
     }
+    else {
+        RTK_LOGE(TAG, "Failed to create httpc connection");
+    }
+    return ota_completed;
 }
 
 /// OTA API 请求格式：
@@ -675,6 +674,19 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
     return result;                               
 }
 
+static char* vb6824_get_version(int max_retry, int retry_duration_ms)
+{
+    char *version = NULL;
+    do {
+        vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
+        if (max_retry-- > 0 && xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(retry_duration_ms)) == pdFALSE) {
+            RTK_LOGE(TAG, "Request version failed\n");
+            continue;
+        }
+    } while (0);
+    return version;
+}
+
 static void jl_ota_routine(void *args)
 {
     (void) args;
@@ -714,45 +726,33 @@ static void jl_ota_routine(void *args)
                     .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
                 };
                 if (lwip_bind(rpc_responder_socket, (const struct sockaddr*)&address, sizeof address) == 0) {
-                    RTK_LOGI(TAG, "RPC responder is starting\n");
-                    int retry_count = 5;
+                    RTK_LOGI(TAG, "RPC responder is started\n");
                     serial_baud(&vb6824_serial, VB6824_UART_BAUDRATE);
-                    for (;;) {
-                        char *version = NULL;
-                        while (xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(3000))) {
-                            vPortFree(version);
-                            version = NULL;
-                        }
-                        vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
-                        if (xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(3000)) == pdFALSE && retry_count-- > 0) {
-                            RTK_LOGE(TAG, "Request version failed\n");
-                            continue;
-                        }
+                    char *version = vb6824_get_version(3, 1000);
+                    int ota_completed = 1;
+                    do {
                         cJSON *result = jl_ota_request_update_info(host, port, path, use_tls, device_name, version);
-                        if (version) {
-                            vPortFree(version);
-                        }
                         if (result) {
                             if (cJSON_IsObject(result)) {
-                                cJSON *data = cJSON_GetObjectItem(result, "data");
-                                if (cJSON_IsObject(data)) {
-#if 1
-                                    char *host = cJSON_GetObjectItem(data, "host")->valuestring;
-                                    uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
-                                    char *path = cJSON_GetObjectItem(data, "path")->valuestring;
-                                    int tls = cJSON_GetObjectItem(data, "tlsEnabled")->valueint;
-                                    RTK_LOGI(TAG, "OTA host=%s port=%u path=%s tls=%d\n", host, port, path, tls);
-                                    jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
-                                    RTK_LOGI(TAG, "OTA finished\n");
-#else
-                                    (void) jl_do_ota_update;
-                                    RTK_LOGI(TAG, "OTA skipped\n");
-#endif
-                                    break;
+                                if (cJSON_IsTrue(cJSON_GetObjectItem(result, "success"))) {
+                                    cJSON *data = cJSON_GetObjectItem(result, "data");
+                                    if (cJSON_IsObject(data)) {
+                                        char *host = cJSON_GetObjectItem(data, "host")->valuestring;
+                                        uint16_t port = (uint16_t)cJSON_GetObjectItem(data, "port")->valuedouble;
+                                        char *path = cJSON_GetObjectItem(data, "path")->valuestring;
+                                        int tls = cJSON_GetObjectItem(data, "tlsEnabled")->valueint;
+                                        RTK_LOGI(TAG, "OTA host=%s port=%u path=%s tls=%d\n", host, port, path, tls);
+                                        ota_completed = jl_do_ota_update(rpc_responder_socket, host, port, path, tls);
+                                    }
+                                    else {
+                                        RTK_LOGI(TAG, "OTA update is not required\n");
+                                    }
                                 }
                                 else {
-                                    RTK_LOGI(TAG, "OTA update is not required\n");
-                                    break;
+                                    cJSON *messageObject = cJSON_GetObjectItem(result, "message");
+                                    if (cJSON_IsString(messageObject)) {
+                                        RTK_LOGE(TAG, "OTA Error Message: %s\n", messageObject->valuestring);
+                                    }
                                 }
                             }
                             else {
@@ -763,6 +763,10 @@ static void jl_ota_routine(void *args)
                         else {
                             RTK_LOGE(TAG, "Failed to get OTA update info\n");
                         }
+                    } while (!ota_completed);
+
+                    if (version) {
+                        vPortFree(version);
                     }
                 }
                 else {
