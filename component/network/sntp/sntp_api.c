@@ -19,10 +19,18 @@ uint32_t sntp_get_update_interval(void)
 	return sntp_update_interval;
 }
 
+_WEAK void on_sntp_time_updated(uint32_t sec, uint32_t us)
+{
+	(void) sec;
+	(void) us;
+	// This function can be overridden by the user to perform actions when SNTP time is updated
+}
+
 void sntp_set_system_time(uint32_t sec, uint32_t us)
 {
 	struct timeval tv = { .tv_sec = sec, .tv_usec = us };
 	_settimeofday(&tv, NULL);
+	on_sntp_time_updated(sec, us);
 }
 
 void sntp_get_system_time(uint32_t *sec, uint32_t *us)

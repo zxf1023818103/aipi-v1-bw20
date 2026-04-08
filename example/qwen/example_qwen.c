@@ -1,0 +1,546 @@
+#include <stdlib.h>
+#include <FreeRTOS.h>
+#include <task.h>
+#include <semphr.h>
+#include <envlock.h>
+#include <sys/unistd.h>
+
+#include <ameba_soc.h>
+#include <sys_api.h>
+#include <wdt_api.h>
+#include <atcmd_service.h>
+#include <httpc.h>
+#include <wsclient_api.h>
+#include <lwip/sockets.h>
+#include <lwip_netconf.h>
+
+#include <c_mmi.h>
+#include <lib_c_license.h>
+#include <qwen_test.h>
+
+#include "hal.h"
+#include "config.h"
+#include "ntp.h"
+#include "ota.h"
+#include "ali_cert.h"
+#include "vb6824.h"
+#include "sound.h"
+#include "example_qwen.h"
+
+#define TAG "QWEN"
+
+#define MMI_END_POINT "bailian.multimodalagent.aliyuncs.com"
+
+typedef struct local_sound {
+    const uint8_t *pcm_data;
+    size_t pcm_data_size;
+} local_sound_t;
+
+static SemaphoreHandle_t s_wss_ready_sem, s_player_sem, s_local_sound_play_done_sem;
+
+static QueueHandle_t s_local_sound_q;
+
+static int32_t mmi_event_callback(uint32_t event, void *param)
+{
+    char *text = param;
+    switch (event) {
+        case C_MMI_EVENT_USER_CONFIG: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_USER_CONFIG\n");
+            c_mmi_set_voice_id("longanyang");
+            c_mmi_reset_dialog_id();
+            break;
+        }
+        case C_MMI_EVENT_DATA_INIT: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_DATA_INIT\n");
+            xSemaphoreGive(s_wss_ready_sem);
+            break;
+        }
+        case C_MMI_EVENT_DATA_DEINIT: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_DATA_DEINIT\n");
+            local_sound_t local_sound = {
+                .pcm_data = g_disconnected_pcm,
+                .pcm_data_size = g_disconnected_pcm_len,
+            };
+            xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
+            break;
+        }
+        case C_MMI_EVENT_SPEECH_READY: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_SPEECH_READY\n");
+            local_sound_t local_sound = {
+                .pcm_data = g_connected_pcm,
+                .pcm_data_size = g_connected_pcm_len,
+            };
+            xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
+            break;
+        }
+        case C_MMI_EVENT_SPEECH_START: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_SPEECH_START\n");
+            // dummy_player_stop();
+            // dummy_recorder_start();
+            break;
+        }
+        case C_MMI_EVENT_ASR_START: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_START\n");
+            break;
+        }
+        case C_MMI_EVENT_ASR_INCOMPLETE: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_INCOMPLETE text=%s\n", text);
+            break;
+        }
+        case C_MMI_EVENT_ASR_COMPLETE: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_COMPLETE text=%s\n", text ? text : "(null)");
+            break;
+        }
+        case C_MMI_EVENT_ASR_END: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_ASR_END\n");
+            vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
+            local_sound_t local_sound = {
+                .pcm_data = g_stop_recording_pcm,
+                .pcm_data_size = g_stop_recording_pcm_len,
+            };
+            xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
+            break;
+        }
+        case C_MMI_EVENT_LLM_INCOMPLETE: {
+            // RTK_LOGI(TAG, "C_MMI_EVENT_LLM_INCOMPLETE text=%s\n", text);
+            break;
+        }
+        case C_MMI_EVENT_LLM_COMPLETE:
+            RTK_LOGI(TAG, "C_MMI_EVENT_LLM_COMPLETE text=%s\n", text);
+            break;
+        case C_MMI_EVENT_TTS_START: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_TTS_START\n");
+            xSemaphoreGive(s_player_sem);
+            break;
+        }
+        case C_MMI_EVENT_TTS_END: {
+            RTK_LOGI(TAG, "C_MMI_EVENT_TTS_END\n");
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+
+    return UTIL_SUCCESS;
+}
+
+static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, size_t content_len)
+{
+    // httpc_setup_debug(HTTPC_DEBUG_VERBOSE);
+    cJSON *json = NULL;
+    struct httpc_conn *conn = httpc_conn_new(HTTPC_SECURE_TLS, NULL, NULL, (char*)g_bailian_cert);
+    if (conn) {
+        if (httpc_conn_connect(conn, host, 443, 0) == 0) {
+            httpc_request_write_header_start(conn, "POST", resource, "application/json", content_len);
+            httpc_request_write_header(conn, "Connection", "close");
+            httpc_request_write_header_finish(conn);
+            int ret = httpc_request_write_data(conn, content, content_len);
+            if (ret > 0 && (size_t)ret == content_len) {
+                if (httpc_response_read_header(conn) == 0) {
+                    // httpc_conn_dump_header(conn);
+                    if (httpc_response_is_status(conn, (char *)"200 OK")) {
+                        size_t max_response_len = 1024;
+                        uint8_t *response = util_malloc(max_response_len);
+                        if (response) {
+                            int total_size = 0;
+                            memset(response, 0, max_response_len);
+                            while (1) {
+                                int read_size = httpc_response_read_data(conn, response + total_size, max_response_len - total_size - 1);
+                                if (read_size > 0) {
+                                    total_size += read_size;
+                                }
+                                else {
+                                    break;
+                                }
+
+                                char chunk[] = "chunked";
+                                if (conn->response.trans_enc && memcmp(conn->response.trans_enc, chunk, sizeof chunk - 1) == 0) {
+                                    if (conn->response.trans_chunk_len == 0) {
+                                        break;
+                                    }
+                                }
+                                else {
+                                    if (conn->response.content_len && (size_t)total_size >= conn->response.content_len) {
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (total_size > 0) {
+                                RTK_LOGI(TAG, "Read response: %s\n", response);
+                                json = cJSON_Parse((char*)response);
+                            }
+                            else {
+                                RTK_LOGE(TAG, "HTTP response is empty\n");
+                            }
+
+                            util_free(response);
+                        }
+                    } else {
+                        RTK_LOGE(TAG, "HTTP request failed with status other than 200\n");
+                    }
+                }
+                else {
+                    RTK_LOGE(TAG, "Failed to read HTTP response header\n");
+                }
+            }
+            else {
+                RTK_LOGE(TAG, "Failed to send HTTP request body, ret = %d\n", ret);
+            }
+            httpc_conn_close(conn);
+        } else {
+            RTK_LOGE(TAG, "Failed to connect to server");
+        }
+    }
+    else {
+        RTK_LOGE(TAG, "Failed to create httpc connection");
+    }
+    httpc_conn_free(conn);
+    return json;
+}
+
+static void mmi_ws_handler(wsclient_context **wsclient, int data_len, enum opcode_type opcode)
+{
+	wsclient_context *ws = *wsclient;
+    c_mmi_analyze_recv_data(opcode, ws->receivedData, data_len);
+}
+
+wsclient_context *mmi_wss_connect(void)
+{
+    char *wss_host = c_mmi_get_wss_host();
+    char *wss_port = c_mmi_get_wss_port();
+    char *wss_api = c_mmi_get_wss_api();
+    char *wss_header = c_mmi_get_wss_header();
+    // char *wss_host_global = c_mmi_get_wss_host_global();
+
+    // RTK_LOGI(TAG, "wss_host=%s\n", wss_host);
+    // RTK_LOGI(TAG, "wss_host_global=%s\n", wss_host_global);
+    // RTK_LOGI(TAG, "wss_port=%s\n", wss_port);
+    // RTK_LOGI(TAG, "wss_api=%s\n", wss_api);
+    // RTK_LOGI(TAG, "wss_header=%s\n", wss_header);
+
+    char url[32];
+    snprintf(url, sizeof url, "wss://%s", wss_host);
+    wsclient_context* ws = create_wsclient(url, atoi(wss_port), wss_api + 1, NULL, 8 * 1024, 32 * 1024, 3);
+    if (ws) {
+        ws_dispatch(mmi_ws_handler);
+        ws->ca_cert = (char*)g_dashscope_cert;
+        ws_handshake_header_custom_token(ws, wss_header, strlen(wss_header));
+        int ret = ws_connect_url(ws);
+        if (ret >= 0) {
+            return ws;
+        }
+        else {
+            RTK_LOGE(TAG, "Failed to connect to %s\n", url);
+        }
+        ws_close(&ws);
+    }
+    return NULL;
+}
+
+/// @brief 设备注册
+/// @return 
+static int device_register(char *ws_id, char *app_id, char *app_secret, char *device_name)
+{
+    int ret = UTIL_ERR_FAIL;
+    if (c_license_device_is_registered() == 0) {
+        c_mmi_storage_reset();
+        c_mmi_storage_set_ws_id(ws_id);
+        c_mmi_storage_set_app_id_str(app_id);
+        c_license_set_app_secret_str(app_secret);
+        c_mmi_set_device_name(device_name);
+
+        char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
+        snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
+
+        char request[512];
+        if (c_license_gen_register_str(request, sizeof request, time_ms_str) == UTIL_SUCCESS) {
+            cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/device/v1/register", (uint8_t*)request, strlen(request));
+            if (json) {
+                cJSON *data = cJSON_GetObjectItem(json, "data");
+                if (data && !cJSON_IsNull(data)) {
+                    char *data_str = cJSON_Print(data);
+                    if (data_str) {
+                        int32_t err = c_license_analyze_register_rsp(data_str);
+                        if (err == UTIL_SUCCESS) {
+                            ret = c_mmi_storage_save();
+                        }
+                        cJSON_free(data_str);
+                    }
+                }
+                else {
+                    RTK_LOGE(TAG, "Failed to find data object\n");
+                }
+                cJSON_Delete(json);
+            } else {
+                RTK_LOGE(TAG, "Failed to get register response from license server\n");
+            }
+        }
+    }
+    else {
+        ret = UTIL_SUCCESS;
+    }
+    return ret;
+}
+
+/// @brief 设备登录
+/// @return 
+static int device_login(char *api_key)
+{
+    int ret = UTIL_ERR_FAIL;
+    if (c_license_is_token_expire(util_get_timestamp()) == 0) {
+        char time_ms_str[C_UTIL_TIMESTAMP_MS_LEN + 1];
+        snprintf(time_ms_str, sizeof time_ms_str, "%" PRId64, util_get_timestamp());
+        char request[512];
+        if (c_license_gen_get_token_str(request, sizeof request, time_ms_str, api_key) == UTIL_SUCCESS) {
+            // 获取服务端返回登录信息
+            cJSON *json = mmi_http_post_json(MMI_END_POINT, "/api/token/v1/getToken", (uint8_t*)request, strlen(request));
+            if (json) {
+                cJSON *data = cJSON_GetObjectItem(json, "data");
+                if (data && !cJSON_IsNull(data)) {
+                    char *data_str = cJSON_Print(data);
+                    if (data_str) {
+                        int32_t err = c_license_analyze_get_token_rsp(data_str);
+                        if (err == UTIL_SUCCESS) {
+                            ret = c_mmi_storage_save();
+                        }
+                        cJSON_free(data_str);
+                    }
+                }
+                else {
+                    RTK_LOGE(TAG, "Failed to find data object\n");
+                }
+            }
+            else {
+                RTK_LOGE(TAG, "Failed to get token response from license server\n");
+            }
+        }
+    }
+    else {
+        ret = UTIL_SUCCESS;
+    }
+    return ret;
+}
+
+/// @brief License 模式初始化
+/// @param  
+/// @return 
+int qwen_license_sdk_init(char *ws_id, char *app_id, char *app_secret, char *device_name, char *api_key)
+{
+    if (c_mmi_sdk_init() == UTIL_SUCCESS) {
+        mmi_user_config_t mmi_config = C_MMI_CONFIG_DEFAULT();
+        mmi_config.evt_cb = mmi_event_callback;
+        mmi_config.player_rb_size = 32 * 1024;
+        mmi_config.downstream_mode = C_MMI_STREAM_MODE_PCM;
+        mmi_config.ds_sample_rate = 16000;
+        mmi_config.upstream_mode = C_MMI_STREAM_MODE_OPUS_RAW;
+        mmi_config.us_sample_rate = 16000;
+        mmi_config.frame_size = 20;
+        mmi_config.text_mode = C_MMI_TEXT_MODE_BOTH;
+        mmi_config.work_mode = C_MMI_MODE_TAP2TALK;
+        c_mmi_config(&mmi_config);
+        c_mmi_storage_set_api_key(api_key);
+        
+        if (device_register(ws_id, app_id, app_secret, device_name) == UTIL_SUCCESS) {
+            return device_login(api_key);
+        }
+    }
+    return UTIL_ERR_FAIL;
+}
+
+void qwen_sdk_init_routine(void *arg)
+{
+    (void) arg;
+
+    load_all_env();
+    ntp_init();
+    ota_init();
+    vb6824_init();
+
+    // watchdog_init(10000);
+    // watchdog_start();
+    while (LwIP_Check_Connectivity(NETIF_WLAN_STA_INDEX) != CONNECTION_VALID) {
+        // watchdog_refresh();
+		vTaskDelay(pdMS_TO_TICKS(1000));
+	}
+    ntp_start();
+    ota_set_wifi_connected(1);
+
+    vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
+    vb6824_set_volume(0x1b);
+
+    while (!util_timestamp_inited()) {
+        // watchdog_refresh();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    vb6824_wait_for_ota_exited();
+
+    char *ws_id = getenv("WS_ID");
+    char *app_id = getenv("APP_ID");
+    char *app_secret = getenv("APP_SECRET");
+    char *device_name = getenv("DEVICE_NAME");
+    char *api_key = getenv("API_KEY");
+    if (ws_id && app_id && app_secret && device_name && api_key) {
+        if (qwen_license_sdk_init(ws_id, app_id, app_secret, device_name, api_key) == UTIL_SUCCESS) {
+            RTK_LOGI(TAG, "SDK Init Done\n");
+            for (;;) {
+                xSemaphoreTake(s_wss_ready_sem, portMAX_DELAY);
+                wsclient_context *ws = mmi_wss_connect();
+                if (ws) {
+                    for (;;) {
+                        watchdog_refresh();
+                        ws_poll(10000, &ws);
+                        if (ws->readyState != WSC_CLOSED) {
+                            uint8_t opcode;
+                            static uint8_t data[8 * 1024];
+                            size_t len = c_mmi_get_send_data(&opcode, data, sizeof data);
+                            if (len > 0) {
+                                if (ws_send_with_opcode((char*)data, len, 1, opcode, 1, ws) != 0) {
+                                    RTK_LOGE(TAG, "ws_send_with_opcode failed\n");
+                                    break;
+                                }
+                            }
+                        }
+                        else {
+                            break;
+                        }
+                    }
+                    ws_close(&ws);
+                    ws_free(ws);
+                }
+            }
+        }
+    }
+    else {
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Missing required env variables for license initialization\n");
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Please set WS_ID, APP_ID, APP_SECRET, DEVICE_NAME, and API_KEY env variables\n");
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Start qwen_sdk_test without license initialization\n");
+        qwen_sdk_test_init();
+        qwen_sdk_test();
+        util_storage_erase();
+        for (;;) {
+            watchdog_refresh();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void player_routine(void *args)
+{
+    (void) args;
+
+    QueueSetHandle_t qset = xQueueCreateSet(1 + 1);
+    xQueueAddToSet(s_local_sound_q, qset);
+    xQueueAddToSet(s_player_sem, qset);
+    for (;;) {
+        local_sound_t local_sound;
+        QueueSetMemberHandle_t q = xQueueSelectFromSet(qset, portMAX_DELAY);
+        if (q == s_local_sound_q) {
+            if (xQueueReceive(s_local_sound_q, &local_sound, 0) == pdTRUE) {
+                for (size_t i = 0; i < local_sound.pcm_data_size; i += 320) {
+                    vb6824_send(VB6824_CMD_PLAY, local_sound.pcm_data + i, 320);
+                }
+                xSemaphoreGive(s_local_sound_play_done_sem);
+            }
+        }
+        else if (q == s_player_sem) {
+            if (xSemaphoreTake(s_player_sem, 0) == pdTRUE) {
+                static uint8_t data[320];
+                size_t remainder = sizeof data;
+                while (xQueuePeek(s_local_sound_q, &local_sound, 0) == pdFALSE && c_mmi_get_state() != C_MMI_STATE_LISTENING && !c_mmi_audio_recv_all() && remainder) {
+                    size_t len = c_mmi_get_player_data(data + sizeof data - remainder, remainder);
+                    remainder -= len;
+                    if (remainder == 0) {
+                        vb6824_send(VB6824_CMD_PLAY, data, sizeof data);
+                        remainder = sizeof data;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void vb6824_on_report_asr(uint8_t *data, size_t data_len)
+{
+    if (strncmp((char*)data, "你好小安", data_len) == 0) {
+        local_sound_t local_sound = {
+            .pcm_data = g_start_recording_pcm,
+            .pcm_data_size = g_start_recording_pcm_len,
+        };
+        xQueueSend(s_local_sound_q, &local_sound, portMAX_DELAY);
+        xSemaphoreTake(s_local_sound_play_done_sem, portMAX_DELAY);
+        c_mmi_speech_start();
+    }
+    else if (strncmp((char*)data, "再见", data_len) == 0 || strncmp((char*)data, "不聊了", data_len) == 0) {
+        c_mmi_speech_end();
+    }
+    else if (strncmp((char*)data, "开始配网", data_len) == 0) {
+
+    }
+    else if (strncmp((char*)data, "停止配网", data_len) == 0) {
+
+    }
+}
+
+void vb6824_on_report_record(uint8_t *data, size_t data_len)
+{
+    if (c_mmi_get_state() == C_MMI_STATE_LISTENING) {
+        c_mmi_put_recorder_data(data, data_len);
+    }
+}
+
+void app_example(void)
+{
+    s_wss_ready_sem = xSemaphoreCreateBinary();
+    s_player_sem = xSemaphoreCreateBinary();
+    s_local_sound_q = xQueueCreate(1, sizeof(local_sound_t));
+    s_local_sound_play_done_sem = xSemaphoreCreateBinary();
+    xTaskCreate(qwen_sdk_init_routine, "qwen_sdk_init", 1024 * 8, NULL, tskIDLE_PRIORITY + 1, NULL);
+    xTaskCreate(player_routine, "player", 1024, NULL, tskIDLE_PRIORITY + 1, NULL);
+}
+
+void at_chat_set(u16 argc, char **argv)
+{
+    if (argc == 2) {
+        char *text = argv[1];
+        if (c_mmi_question(text) == 0) {
+            at_printf("\r\nOK\r\n");
+            return;
+        }
+    }
+    else {
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Invalid number of parameters\n");
+    }
+    at_printf("\r\nERROR\r\n");
+}
+
+void at_tts_set(u16 argc, char **argv)
+{
+    if (argc == 2) {
+        char *text = argv[1];
+        if (c_mmi_tts(text) == 0) {
+            at_printf("\r\nOK\r\n");
+            return;
+        }
+    }
+    else {
+        RTK_LOGS(TAG, RTK_LOG_ERROR, "Invalid number of parameters\n");
+    }
+    at_printf("\r\nERROR\r\n");
+}
+
+void at_pause_speech(u16 argc, char **argv)
+{
+    (void) argc;
+    (void) argv;
+
+    if (c_mmi_speech_pause() == 0) {
+        at_printf("\r\nOK\r\n");
+    }
+    else {
+        at_printf("\r\nERROR\r\n");
+    }
+}

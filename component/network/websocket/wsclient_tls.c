@@ -66,6 +66,7 @@ int wss_tls_connect(wsclient_context *wsclient, char *host, int port)
 			printf("\n[WSCLIENT] ERROR: ssl_setup %d\n", ret);
 			goto exit;
 		}
+		mbedtls_ssl_set_hostname(ssl, host);
 	} else {
 		printf("\n[WSCLIENT] ERROR: tls is NULL\n");
 		ret = -1;
