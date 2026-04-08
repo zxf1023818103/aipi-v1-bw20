@@ -33,8 +33,7 @@ target_link_libraries(
     ${CURRENT_LIB_NAME} PRIVATE
     -Wl,--no-warn-mismatch
     -Wl,--allow-multiple-definition
-    -L${CMAKE_CURRENT_LIST_DIR}/libs
-    -L${CMAKE_CURRENT_LIST_DIR}/third_party/tinycrypt
+    -L${CMAKE_CURRENT_LIST_DIR}/libs/${c_SOC_TYPE}
     qwen_sdk
     c_mmi_cmd
     qwen_test

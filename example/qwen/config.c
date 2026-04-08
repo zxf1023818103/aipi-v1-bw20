@@ -17,7 +17,7 @@ int load_all_env(void)
     char *prefix = find_vfs_tag(VFS_REGION_1);
     if (prefix) {
         char path[MAX_PATH_LEN];
-        DiagSnPrintf(path, MAX_PATH_LEN, "%s:%s", prefix, ENV_DIR);
+        snprintf(path, MAX_PATH_LEN, "%s:%s", prefix, ENV_DIR);
         void *dir = opendir(path);
         if (dir) {
             struct dirent *entry;
@@ -26,7 +26,7 @@ int load_all_env(void)
                     continue;
                 }
                 char file_path[MAX_PATH_LEN];
-                DiagSnPrintf(file_path, MAX_PATH_LEN, "%s/%s", path, entry->d_name);
+                snprintf(file_path, MAX_PATH_LEN, "%s/%s", path, entry->d_name);
                 FILE *f = fopen(file_path, "r");
                 if (f) {
                     fseek(f, 0, SEEK_END);
@@ -64,7 +64,7 @@ int save_all_env(void)
     char *prefix = find_vfs_tag(VFS_REGION_1);
     if (prefix) {
         char path[MAX_ENV_VALUE_LENGTH];
-        DiagSnPrintf(path, MAX_ENV_VALUE_LENGTH, "%s:%s", prefix, ENV_DIR);
+        snprintf(path, MAX_ENV_VALUE_LENGTH, "%s:%s", prefix, ENV_DIR);
         mkdir(path, 0);
         __env_lock(_REENT);
         for (char **env = environ; *env; env++) {
@@ -84,7 +84,7 @@ int save_all_env(void)
                 strncpy(value, equal_sign + 1, value_len);
                 value[value_len] = '\0';
                 char file_path[MAX_PATH_LEN];
-                DiagSnPrintf(file_path, MAX_PATH_LEN, "%s/%s", path, key);
+                snprintf(file_path, MAX_PATH_LEN, "%s/%s", path, key);
                 FILE *f = fopen(file_path, "w");
                 if (f) {
                     fwrite(value, 1, value_len, f);

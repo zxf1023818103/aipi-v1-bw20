@@ -58,7 +58,7 @@ void qwen_sdk_test_init(void)
     char *prefix = find_vfs_tag(VFS_REGION_1);
     if (prefix) {
         char path[MAX_PATH_LEN];
-        DiagSnPrintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
+        snprintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
         FILE *f = fopen(path, "r");
         if (f) {
             fclose(f);
@@ -82,7 +82,7 @@ int32_t util_storage_erase(void)
     char *prefix = find_vfs_tag(VFS_REGION_1);
     if (prefix) {
         char path[MAX_PATH_LEN];
-        DiagSnPrintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
+        snprintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
         FILE *f = fopen(path, "w");
         if (f) {
             fclose(f);
@@ -106,7 +106,7 @@ int32_t util_storage_storage(uint8_t *data, uint32_t size)
     char *prefix = find_vfs_tag(VFS_REGION_1);
     if (prefix) {
         char path[MAX_PATH_LEN];
-        DiagSnPrintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
+        snprintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
         FILE *f = fopen(path, "w");
         if (f) {
             fwrite(data, 1, size, f);
@@ -130,10 +130,10 @@ int32_t util_storage_load(uint8_t *data, uint32_t size)
     char *prefix = find_vfs_tag(VFS_REGION_1);
     if (prefix) {
         // char dir_path[MAX_PATH_LEN];
-        // DiagSnPrintf(dir_path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_DIR_NAME);
+        // snprintf(dir_path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_DIR_NAME);
         // mkdir(dir_path, 0); // Ensure the directory exists before trying to read the file
         char path[MAX_PATH_LEN];
-        DiagSnPrintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
+        snprintf(path, MAX_PATH_LEN, "%s:%s", prefix, STORAGE_FILE_NAME);
         FILE *f = fopen(path, "r");
         if (f) {
             fseek(f, 0, SEEK_END);

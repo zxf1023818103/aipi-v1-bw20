@@ -168,7 +168,7 @@ static cJSON* mmi_http_post_json(char *host, char *resource, uint8_t *content, s
                             }
 
                             if (total_size > 0) {
-                                // RTK_LOGI(TAG, "Read response: %s\n", response);
+                                RTK_LOGI(TAG, "Read response: %s\n", response);
                                 json = cJSON_Parse((char*)response);
                             }
                             else {

@@ -683,15 +683,14 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
 
 static char* vb6824_get_version(int max_retry, int retry_duration_ms)
 {
-    char *version = NULL;
-    do {
+    for (int i = 0; i < max_retry; i++) {
         vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
-        if (max_retry-- > 0 && xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(retry_duration_ms)) == pdFALSE) {
-            RTK_LOGE(TAG, "Request version failed\n");
-            continue;
+        char *version = NULL;
+        if (xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(retry_duration_ms)) == pdTRUE) {
+            return version;
         }
-    } while (0);
-    return version;
+    }
+    return NULL;
 }
 
 static void jl_ota_routine(void *args)
@@ -735,7 +734,7 @@ static void jl_ota_routine(void *args)
                 if (lwip_bind(rpc_responder_socket, (const struct sockaddr*)&address, sizeof address) == 0) {
                     RTK_LOGI(TAG, "RPC responder is started\n");
                     serial_baud(&vb6824_serial, VB6824_UART_BAUDRATE);
-                    char *version = vb6824_get_version(3, 1000);
+                    char *version = vb6824_get_version(5, 3000);
                     int ota_completed = 1;
                     do {
                         cJSON *result = jl_ota_request_update_info(host, port, path, use_tls, device_name, version);
