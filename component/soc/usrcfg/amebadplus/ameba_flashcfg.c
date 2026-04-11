@@ -78,12 +78,12 @@ const FlashLayoutInfo_TypeDef Flash_Layout[] = {
 	/* Region_Type, [StartAddr, EndAddr] */
 	{IMG_BOOT,      0x08000000, 0x08013FFF}, //Boot Manifest(4K) + KM4 Bootloader(76K)
 	//Users should modify below according to their own memory
-	{IMG_APP_OTA1,  0x08014000, 0x081FFFFF}, //Certificate(4K) + Manifest(4K) + KM4 Application OTA1 + RDP IMG OTA1
+	{IMG_APP_OTA1,  0x08014000, 0x083FFFFF}, //Certificate(4K) + Manifest(4K) + KM4 Application OTA1 + RDP IMG OTA1
 
-	{IMG_BOOT_OTA2, 0x08200000, 0x08213FFF}, //Boot Manifest(4K) + KM4 Bootloader(76K) OTA
-	{IMG_APP_OTA2,  0x08214000, 0x083DCFFF}, //Certificate(4K) + Manifest(4K) + KM4 Application OTA2 + RDP IMG OTA2
+	{IMG_BOOT_OTA2, 0x08400000, 0x08413FFF}, //Boot Manifest(4K) + KM4 Bootloader(76K) OTA
+	{IMG_APP_OTA2,  0x08414000, 0x087DCFFF}, //Certificate(4K) + Manifest(4K) + KM4 Application OTA2 + RDP IMG OTA2
 
-	{VFS1,          0x083E0000, 0x083FFFFF}, //VFS region 1 (128K)
+	{VFS1,          0x087E0000, 0x087FFFFF}, //VFS region 1 (128K)
 	{VFS2,          0xFFFFFFFF, 0xFFFFFFFF}, //VFS region 2
 	{USER,          0xFFFFFFFF, 0xFFFFFFFF}, //reserve for user
 

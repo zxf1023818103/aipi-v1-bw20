@@ -368,7 +368,7 @@ void qwen_sdk_init_routine(void *arg)
     ota_set_wifi_connected(1);
 
     vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
-    vb6824_set_volume(0x1b);
+    vb6824_set_volume(0x10);
 
     while (!util_timestamp_inited()) {
         // watchdog_refresh();

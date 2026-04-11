@@ -8,8 +8,8 @@ extern "C" {
 #endif /* __cplusplus */
 
 #ifdef CONFIG_AMEBADPLUS
-    #define VB6824_UART_TX PA_26
-    #define VB6824_UART_RX PB_21
+    #define VB6824_UART_TX PB_31
+    #define VB6824_UART_RX PB_30
 #elif CONFIG_AMEBAGREEN2
     #define VB6824_UART_TX PA_18
     #define VB6824_UART_RX PA_3
