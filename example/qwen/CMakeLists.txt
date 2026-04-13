@@ -11,6 +11,7 @@ target_sources(
     example_qwen.c
     vb6824.c
     sound.c
+    modem.c
 )
 
 target_include_directories(

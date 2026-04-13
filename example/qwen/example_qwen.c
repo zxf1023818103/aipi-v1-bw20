@@ -25,6 +25,7 @@
 #include "ali_cert.h"
 #include "vb6824.h"
 #include "sound.h"
+#include "modem.h"
 #include "example_qwen.h"
 
 #define TAG "QWEN"
@@ -356,26 +357,28 @@ void qwen_sdk_init_routine(void *arg)
     load_all_env();
     ntp_init();
     ota_init();
-    vb6824_init();
+    modem_init();
 
-    // watchdog_init(10000);
-    // watchdog_start();
+    watchdog_init(4000);
+    watchdog_start();
     while (LwIP_Check_Connectivity(NETIF_WLAN_STA_INDEX) != CONNECTION_VALID) {
-        // watchdog_refresh();
+        watchdog_refresh();
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
     ntp_start();
-    ota_set_wifi_connected(1);
 
+    vb6824_init();
     vb6824_send(VB6824_CMD_STOP_RECORD, NULL, 0);
     vb6824_set_volume(0x10);
 
     while (!util_timestamp_inited()) {
-        // watchdog_refresh();
+        watchdog_refresh();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    vb6824_wait_for_ota_exited();
+    while (vb6824_wait_for_ota_exited(1000) == 0) {
+        watchdog_refresh();
+    }
 
     char *ws_id = getenv("WS_ID");
     char *app_id = getenv("APP_ID");

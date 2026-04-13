@@ -10,7 +10,7 @@ extern "C" {
 #ifdef CONFIG_AMEBADPLUS
     #define VB6824_UART_TX PB_31
     #define VB6824_UART_RX PB_30
-#elif CONFIG_AMEBAGREEN2
+#elif defined CONFIG_AMEBAGREEN2
     #define VB6824_UART_TX PA_18
     #define VB6824_UART_RX PA_3
 #else
@@ -92,7 +92,7 @@ extern "C" {
 void vb6824_init(void);
 void vb6824_send(uint16_t cmd, const uint8_t *data, uint16_t data_len);
 void vb6824_set_volume(uint8_t volume);
-void vb6824_wait_for_ota_exited(void);
+int vb6824_wait_for_ota_exited(uint32_t timeout_msec);
 
 #ifdef __cplusplus
 }

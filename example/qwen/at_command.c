@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "example_qwen.h"
+#include "modem.h"
 
 ATCMD_APONLY_TABLE_DATA_SECTION
 const log_item_t at_custom_items[] = {
@@ -12,4 +13,5 @@ const log_item_t at_custom_items[] = {
     {"+CHAT", at_chat_set},
     {"+TTS", at_tts_set},
     {"+SPEECHPAUSE", at_pause_speech},
+    {"+MODEM", at_modem_set},
 };

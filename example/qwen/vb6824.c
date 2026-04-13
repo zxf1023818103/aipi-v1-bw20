@@ -703,7 +703,7 @@ static void jl_ota_routine(void *args)
     char *path = getenv("API_PATH");
     char *tls = getenv("API_TLS_ENABLED");
 
-    int use_tls = 0;
+    int use_tls = 1;
     if (tls) {
         use_tls = atoi(tls);
     }
@@ -714,7 +714,7 @@ static void jl_ota_routine(void *args)
     }
 
     if (host == NULL) {
-        host = "aipi-v-bw-api-ohfubnzzqo.cn-beijing.fcapp.run";
+        host = "api.zenghome.cn";
     }
 
     if (path == NULL) {
@@ -858,7 +858,7 @@ void vb6824_set_volume(uint8_t volume)
     vb6824_send(VB6824_CMD_SET_VOL, &volume, 1);
 }
 
-void vb6824_wait_for_ota_exited(void)
+int vb6824_wait_for_ota_exited(uint32_t timeout_msec)
 {
-    xSemaphoreTake(jl_ota_exited_sem, portMAX_DELAY);
+    return xSemaphoreTake(jl_ota_exited_sem, pdMS_TO_TICKS(timeout_msec));
 }
