@@ -353,6 +353,12 @@ void qwen_sdk_init_routine(void *arg)
 {
     (void) arg;
 
+    struct ip_addr dns1, dns2;
+    IP4_ADDR(ip_2_ip4(&dns1), 223, 5, 5, 5);
+    IP4_ADDR(ip_2_ip4(&dns2), 223, 6, 6, 6);
+    dns_setserver(0, &dns1);
+    dns_setserver(1, &dns2);
+
     load_all_env();
     ntp_init();
     ota_init();

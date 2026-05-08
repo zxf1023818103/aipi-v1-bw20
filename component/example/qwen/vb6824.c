@@ -394,7 +394,7 @@ static int get_axk_ota_firmware_offset(struct httpc_conn *conn, char *path)
             }
         }
         else {
-            return 0;
+            return -1;
         }
     }
     return -1;
@@ -598,7 +598,7 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
             cJSON *json = cJSON_CreateObject();
             if (json) {
                 cJSON_AddStringToObject(json, "deviceName", device_name);
-                cJSON_AddStringToObject(json, "product", "vb6824");
+                cJSON_AddStringToObject(json, "product", "vb6824-xinban");
                 if (version) {
                     cJSON_AddStringToObject(json, "firmwareName", version);
                 }
@@ -683,14 +683,15 @@ static cJSON *jl_ota_request_update_info(char *host, uint16_t port, char *path, 
 
 static char* vb6824_get_version(int max_retry, int retry_duration_ms)
 {
+    return NULL;
     char *version = NULL;
-    do {
+    for (int i = 0; i < max_retry; i++) {
         vb6824_send(VB6824_CMD_REQUEST_VERSION, NULL, 0);
-        if (max_retry-- > 0 && xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(retry_duration_ms)) == pdFALSE) {
-            RTK_LOGE(TAG, "Request version failed\n");
-            continue;
+        if (xQueueReceive(vb6824_version_queue, &version, pdMS_TO_TICKS(retry_duration_ms)) == pdTRUE) {
+            break;
         }
-    } while (0);
+        RTK_LOGE(TAG, "Request version failed\n");
+    }
     return version;
 }
 
@@ -704,7 +705,7 @@ static void jl_ota_routine(void *args)
     char *path = getenv("API_PATH");
     char *tls = getenv("API_TLS_ENABLED");
 
-    int use_tls = 0;
+    int use_tls = 1;
     if (tls) {
         use_tls = atoi(tls);
     }
@@ -715,7 +716,7 @@ static void jl_ota_routine(void *args)
     }
 
     if (host == NULL) {
-        host = "aipi-v-bw-api-ohfubnzzqo.cn-beijing.fcapp.run";
+        host = "api.zenghome.cn";
     }
 
     if (path == NULL) {
